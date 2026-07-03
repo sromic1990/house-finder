@@ -22,7 +22,7 @@ sources:
   # Live scrapers (working). Flip mock on for offline/demo use.
   mock:     { enabled: false }
   etuovi:   { enabled: true, max_pages: 40 }   # per house type; adapter stops at the real last page
-  oikotie:  { enabled: true, building_types: [2, 4, 32, 64] }  # rivi/pari/omakoti/erillistalo
+  oikotie:  { enabled: true, building_types: [1, 2, 4, 32, 64] }  # +kerrostalo (kept only if duplex)
 
 # How often to refresh listings (detect new / delisted) --------------------
 schedule:
@@ -54,8 +54,8 @@ criteria:
     min_price_per_m2: 1500   # no real Helsinki house sells below this €/m²
     on_unknown: keep
 
-  property_type:             # only houses, not apartment blocks
-    allowed: [omakotitalo, rivitalo, paritalo, erillistalo]
+  property_type:             # houses + duplex apartments (kerrostalo pre-filtered to duplex only)
+    allowed: [omakotitalo, rivitalo, paritalo, erillistalo, kerrostalo]
     on_unknown: keep
 
   bedrooms:                  # bedrooms excl. living room (derives rooms-1)

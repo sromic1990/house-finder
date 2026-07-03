@@ -130,6 +130,7 @@ class OikotieAdapter(SourceAdapter):
         coords = c.get("coordinates") or {}
         images = c.get("images") or {}
         rc = c.get("roomConfiguration") or ""
+        desc = c.get("description") or ""
 
         feats = self._features_from_text(rc)
         # A sauna listed in the unit's own room configuration is private,
@@ -137,6 +138,11 @@ class OikotieAdapter(SourceAdapter):
         if "sauna" in feats and feats["sauna"]["present"] and "taloyht" not in rc.lower():
             feats["sauna"]["private"] = True
 
+        # Duplex: for a kerrostalo the building's floor count isn't the apartment's,
+        # so read the two-floor signal from the room code + marketing description
+        # ("kaksikerroksinen" / "kaksitasoinen" / "maisonette").
+        if parse_duplex(rc + " " + desc):
+            feats["duplex"] = True
         floor_count = bd.get("floorCount")
         btype = bd.get("buildingType")
         # For houses, a 2+ storey building means a two-floor (duplex) home.
