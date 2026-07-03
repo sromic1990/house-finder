@@ -16,12 +16,14 @@ import base64
 import gzip
 import json
 import os
+import statistics
 from datetime import datetime, timezone
 from pathlib import Path
 
 from core.criteria import build_criteria
 from core.criteria.builtins import TransitProximity, haversine_km
 from core.i18n import LANG_NAMES, TRANSLATIONS
+from core.risk import bank_risk, renovation_risk
 
 BASE = Path(__file__).parent
 
@@ -45,8 +47,11 @@ def _in_envelope(L, browse) -> bool:
     return True
 
 
-def _candidate_payload(L, filters, scorers, prev) -> dict:
+def _candidate_payload(L, filters, scorers, prev, year_now, medians, overall) -> dict:
     tm = L.features.get("transit_minutes") or {}
+    reno = renovation_risk(L, year_now)
+    med = medians.get((L.city or "").strip().capitalize(), overall)
+    bank = bank_risk(L, med, reno["level"])
     passes = {}
     for f in filters:
         try:
@@ -75,6 +80,7 @@ def _candidate_payload(L, filters, scorers, prev) -> dict:
         "parking_rank": _PARK_RANK.get((L.features.get("parking") or {}).get("type")),
         "new": L.uid not in prev,
         "pass": passes, "contribs": contribs,
+        "reno_risk": reno, "bank_risk": bank,
     }
 
 
@@ -86,7 +92,15 @@ def build_site(config: dict, store, generated: str) -> str:
     prev = store.previous_ranks()
 
     pool = [L for L in store.active_listings() if _in_envelope(L, browse)]
-    listings = [_candidate_payload(L, filters, scorers, prev) for L in pool]
+    # per-city median €/m² so bank-risk can flag over-market pricing
+    by_city = {}
+    for L in pool:
+        if L.price_per_m2 and L.city:
+            by_city.setdefault(L.city.strip().capitalize(), []).append(L.price_per_m2)
+    medians = {c: statistics.median(v) for c, v in by_city.items() if v}
+    overall = statistics.median([p for v in by_city.values() for p in v]) if by_city else None
+    year_now = datetime.now(timezone.utc).year
+    listings = [_candidate_payload(L, filters, scorers, prev, year_now, medians, overall) for L in pool]
 
     data = {
         "title": config.get("web", {}).get("title", "House Leaderboard"),
@@ -178,6 +192,15 @@ _EXTRA_CSS = """
 .modal-inner{padding:20px 22px 30px}
 .modal-close{position:sticky;top:0;float:right;background:#fff;border:1px solid var(--line);width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:18px}
 .excluded-hint{color:var(--muted);font-size:13px;margin:8px 0 0}
+.risks{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.risk{font-size:11.5px;font-weight:700;padding:3px 8px;border-radius:7px;border:1px solid}
+.risk-box{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:24px}
+.risk-box h2{font-size:16px;margin:2px 0 12px}
+.risk-row{margin-bottom:10px}
+.risk-h{font-weight:800;font-size:14px;margin-bottom:2px}
+.risk-row ul{margin:2px 0 0;padding-left:18px;color:#444}
+.risk-row li{font-size:13px;margin:2px 0}
+.risk-disc{color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:10px;margin-top:6px}
 #refreshBtn{background:var(--top);color:#fff;border-color:var(--top)}
 #refreshBtn:disabled{opacity:.6;cursor:default}
 .rf-overlay{position:fixed;inset:0;background:rgba(8,10,14,.74);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:2000}
@@ -244,6 +267,9 @@ const esc = s => (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'
 const euro = n => n==null?'':'€'+Number(n).toLocaleString('fi-FI',{maximumFractionDigits:0});
 const euroK = n => n==null?'?':'€'+(n>=1000?Math.round(n/1000)+'k':Math.round(n));
 const PARK = {garage:'garage',hall:'parking hall',covered:'carport',own_spot:'own spot',open_pole:'open + heating pole',open:'open spot',none:'no parking'};
+const RISKCOL={low:'#0f9d58',medium:'#e8892b',high:'#e03131'};
+function riskPill(labelKey, r){ if(!r) return ''; const c=RISKCOL[r.level]||'#888';
+  return '<span class="risk" style="color:'+c+';border-color:'+c+'55;background:'+c+'14" title="'+esc((r.reasons||[]).join(' · '))+'">'+esc(t(labelKey))+': '+esc(t('risk_'+r.level))+'</span>'; }
 
 // ---- state ----
 let mapOn = localStorage.getItem('mapOn')==='1';
@@ -277,8 +303,9 @@ const DIMS = {
   best:{get:r=>r.score,hi:true}, price:{get:r=>r.L.price,hi:false}, ppm2:{get:r=>r.L.ppm2,hi:false},
   size:{get:r=>r.L.size,hi:true}, bedrooms:{get:r=>bd(r.L),hi:true}, transit:{get:r=>r.L.transit_min,hi:false},
   station:{get:r=>r.L.station_km,hi:false}, year:{get:r=>r.L.year,hi:true}, parking:{get:r=>r.L.parking_rank,hi:true},
+  bank_safe:{get:r=>r.L.bank_risk?r.L.bank_risk.score:null,hi:false}, reno_safe:{get:r=>r.L.reno_risk?r.L.reno_risk.score:null,hi:false},
 };
-const RANK_ORDER=[['best','sort_best'],['price','sort_price'],['ppm2','sort_ppm2'],['size','sort_size'],['bedrooms','sort_bedrooms'],['transit','sort_transit'],['station','sort_station'],['year','sort_year'],['parking','sort_parking']];
+const RANK_ORDER=[['best','sort_best'],['price','sort_price'],['ppm2','sort_ppm2'],['size','sort_size'],['bedrooms','sort_bedrooms'],['transit','sort_transit'],['station','sort_station'],['year','sort_year'],['parking','sort_parking'],['reno_safe','sort_reno'],['bank_safe','sort_bank']];
 function dedupKey(L){ const a=(L.address||'').toLowerCase().replace(/[^a-z0-9äöå]/g,''); return a?a+'|'+L.size+'|'+L.rooms:null; }
 function ranked(){
   let rows = DATA.listings.filter(included).map(L=>{ const s=scoreOf(L); return {L, score:s.score, priority:s.priority}; });
@@ -325,9 +352,17 @@ function card(r){
     +'<div class="card-body"><div class="card-title">'+esc(L.title)+'</div>'
     +'<div class="card-price">'+euro(L.price)+(L.ppm2?' <span class="ppm2">· '+euro(L.ppm2)+'/m²</span>':'')+'</div>'
     +'<div class="card-facts">'+fa+'</div><div class="card-chips">'+chips+'</div>'
+    +'<div class="risks">'+riskPill('bank_label',L.bank_risk)+riskPill('reno_label',L.reno_risk)+'</div>'
     +'<a class="src-link-card" href="'+esc(L.url)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+esc(t('view_on',{source:L.source}))+'</a></div></article>';
 }
 function wireCards(root){ root.querySelectorAll('.card').forEach(c=>c.onclick=()=>openModal(c.dataset.id)); }
+function riskSection(L){
+  const row=(labelKey,r)=>{ if(!r) return ''; const c=RISKCOL[r.level];
+    return '<div class="risk-row"><div class="risk-h" style="color:'+c+'">'+esc(t(labelKey))+': '+esc(t('risk_'+r.level))+'</div><ul>'+(r.reasons||[]).map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></div>'; };
+  if(!L.bank_risk && !L.reno_risk) return '';
+  return '<section class="risk-box"><h2>'+esc(t('risk_heading'))+'</h2>'+row('bank_label',L.bank_risk)+row('reno_label',L.reno_risk)
+    +'<div class="risk-disc">'+esc(t('risk_disclaimer'))+'</div></section>';
+}
 
 // ---- render shell ----
 function render(){
@@ -472,6 +507,7 @@ function openModal(id){
     +(gallery?'<div class="gallery" style="margin-top:16px">'+gallery+'</div>':'')
     +'<div class="detail-cols"><section class="facts-box"><h2>'+esc(t('key_facts'))+'</h2>'+facts(L)+'</section>'
     +'<section class="score-box"><h2>'+esc(t('why_rank'))+'</h2><ul class="score-list">'+bars+'</ul></section></div>'
+    +riskSection(L)
     +(plans?'<section><h2>'+esc(t('floor_plan'))+'</h2><div class="gallery">'+plans+'</div></section>':'')
     +(L.lat&&L.lon?'<section><h2>'+esc(t('location'))+'</h2><div id="dmap" style="height:320px;border-radius:12px"></div></section>':'');
   document.getElementById('modalBack').classList.add('open');
