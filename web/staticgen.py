@@ -146,10 +146,11 @@ _EXTRA_CSS = """
 .count{color:var(--muted);font-size:13px;margin-left:auto}
 .rankbar,.citybar{display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin:0 0 12px}
 .bar-label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-right:2px}
-.rk,.ct{font-size:13px;font-weight:600;padding:6px 11px;border-radius:999px;border:1px solid var(--line);background:#fff;color:var(--muted);cursor:pointer;user-select:none}
+.rk,.ct,.tp{font-size:13px;font-weight:600;padding:6px 11px;border-radius:999px;border:1px solid var(--line);background:#fff;color:var(--muted);cursor:pointer;user-select:none}
 .rk.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 .ct.on{background:var(--accent);color:#fff;border-color:var(--accent)}
-.rk:hover,.ct:hover{border-color:var(--ink)}
+.tp.on{background:#7048e8;color:#fff;border-color:#7048e8}
+.rk:hover,.ct:hover,.tp:hover{border-color:var(--ink)}
 .filters-panel{display:none;flex-wrap:wrap;gap:8px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
 .filters-panel.open{display:flex}
 .filters-panel .grp{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);width:100%;margin:6px 0 0}
@@ -249,9 +250,13 @@ let mapOn = localStorage.getItem('mapOn')==='1';
 let rankBy = new Set((JSON.parse(localStorage.getItem('rankBy')||'null'))||['best']); if(!rankBy.size) rankBy=new Set(['best']);
 const FILTER_KEYS = DATA.criteria.filter(c=>c.kind==='filter').map(c=>c.key);
 let enabled = new Set(DATA.criteria.map(c=>c.key));   // all criteria on by default
+const cap = s => s? s.charAt(0).toUpperCase()+s.slice(1) : s;
 const ALL_CITIES = [...new Set(DATA.listings.map(L=>L.city).filter(Boolean))].sort();
 let enabledCities = (()=>{ const s=JSON.parse(localStorage.getItem('cities')||'null');
   const set=new Set(s? s.filter(c=>ALL_CITIES.includes(c)) : ALL_CITIES); return set.size?set:new Set(ALL_CITIES); })();
+const ALL_TYPES = [...new Set(DATA.listings.map(L=>L.type).filter(Boolean))].sort();
+let enabledTypes = (()=>{ const s=JSON.parse(localStorage.getItem('types')||'null');
+  const set=new Set(s? s.filter(x=>ALL_TYPES.includes(x)) : ALL_TYPES); return set.size?set:new Set(ALL_TYPES); })();
 
 // ---- compute ----
 function bd(L){ return L.bedrooms!=null?L.bedrooms:(L.rooms!=null?L.rooms-1:null); }
@@ -263,6 +268,7 @@ function scoreOf(L){
 }
 function included(L){
   if(enabledCities.size && !enabledCities.has(L.city)) return false;
+  if(enabledTypes.size && L.type && !enabledTypes.has(L.type)) return false;
   for(const k of FILTER_KEYS){ if(enabled.has(k) && L.pass[k]===false) return false; }
   return true;
 }
@@ -329,6 +335,7 @@ function render(){
   const langs=Object.keys(DATA.langs).map(c=>'<a href="#" class="lang '+(c===lang?'active':'')+'" data-lang="'+c+'">'+DATA.langs[c]+'</a>').join('');
   const rankChips=RANK_ORDER.map(o=>'<span class="rk '+(rankBy.has(o[0])?'on':'')+'" data-rk="'+o[0]+'">'+esc(t(o[1]))+'</span>').join('');
   const cityChips=ALL_CITIES.map(c=>'<span class="ct '+(enabledCities.has(c)?'on':'')+'" data-ct="'+esc(c)+'">'+esc(c)+'</span>').join('');
+  const typeChips=ALL_TYPES.map(x=>'<span class="tp '+(enabledTypes.has(x)?'on':'')+'" data-tp="'+esc(x)+'">'+esc(cap(x))+'</span>').join('');
   document.getElementById('app').innerHTML=
     '<header class="site-header"><a class="brand" href="#">🏠 '+esc(DATA.title)+'</a>'
     +'<nav><a href="#" id="mapToggle" class="'+(mapOn?'active':'')+'">🗺 '+esc(t('map_view'))+'</a><span class="langs">'+langs+'</span></nav></header>'
@@ -338,6 +345,7 @@ function render(){
     +(DATA.dispatch?'<button id="refreshBtn">🔄 '+esc(t('rf_button'))+'</button>':'')
     +'<span class="count" id="count"></span></div>'
     +'<div class="rankbar"><span class="bar-label">'+esc(t('sort_by'))+'</span>'+rankChips+'</div>'
+    +(ALL_TYPES.length>1?'<div class="citybar"><span class="bar-label">'+esc(t('types_label'))+'</span>'+typeChips+'</div>':'')
     +(ALL_CITIES.length>1?'<div class="citybar"><span class="bar-label">'+esc(t('cities_label'))+'</span>'+cityChips+'</div>':'')
     +'<div class="filters-panel" id="filtersPanel"></div>'
     +'<div id="content"></div></main>';
@@ -349,6 +357,9 @@ function render(){
   document.querySelectorAll('.ct').forEach(el=>el.onclick=()=>{ const c=el.dataset.ct;
     if(enabledCities.has(c)){ if(enabledCities.size>1) enabledCities.delete(c); } else enabledCities.add(c);
     localStorage.setItem('cities',JSON.stringify([...enabledCities])); el.classList.toggle('on',enabledCities.has(c)); renderContent(); });
+  document.querySelectorAll('.tp').forEach(el=>el.onclick=()=>{ const x=el.dataset.tp;
+    if(enabledTypes.has(x)){ if(enabledTypes.size>1) enabledTypes.delete(x); } else enabledTypes.add(x);
+    localStorage.setItem('types',JSON.stringify([...enabledTypes])); el.classList.toggle('on',enabledTypes.has(x)); renderContent(); });
   document.getElementById('filtersBtn').onclick=()=>document.getElementById('filtersPanel').classList.toggle('open');
   document.getElementById('mapToggle').onclick=e=>{e.preventDefault();mapOn=!mapOn;localStorage.setItem('mapOn',mapOn?'1':'0');render();};
   if(DATA.dispatch){ const rb=document.getElementById('refreshBtn'); if(rb) rb.onclick=doRefresh; }
@@ -393,7 +404,7 @@ async function doRefresh(){
 function buildFiltersPanel(){
   const p=document.getElementById('filtersPanel');
   const item=c=>'<label class="chk '+(enabled.has(c.key)?'':'off')+'"><input type="checkbox" data-key="'+c.key+'"'+(enabled.has(c.key)?' checked':'')+'>'+esc(c.title)+'</label>';
-  p.innerHTML='<div class="grp">'+esc(t('req_group'))+'</div>'+DATA.criteria.filter(c=>c.kind==='filter').map(item).join('')
+  p.innerHTML='<div class="grp">'+esc(t('req_group'))+'</div>'+DATA.criteria.filter(c=>c.kind==='filter'&&c.key!=='property_type').map(item).join('')
     +'<div class="grp">'+esc(t('pref_group'))+'</div>'+DATA.criteria.filter(c=>c.kind==='score').map(item).join('');
   p.querySelectorAll('input').forEach(i=>i.onchange=()=>{ i.checked?enabled.add(i.dataset.key):enabled.delete(i.dataset.key);
     i.closest('.chk').classList.toggle('off',!i.checked); renderContent(); });
