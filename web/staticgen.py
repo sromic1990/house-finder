@@ -52,10 +52,12 @@ def _in_envelope(L, browse) -> bool:
     return True
 
 
-def _candidate_payload(L, filters, scorers, prev, year_now, medians, overall, cost_cfg) -> dict:
+def _candidate_payload(L, filters, scorers, prev, year_now, medians, type_medians, overall, cost_cfg) -> dict:
     tm = L.features.get("transit_minutes") or {}
     reno = renovation_risk(L, year_now)
-    med = medians.get((L.city or "").strip().capitalize(), overall)
+    city = (L.city or "").strip().capitalize()
+    # prefer the same-type median; fall back to city-wide, then overall
+    med = type_medians.get((city, L.property_type)) or medians.get(city) or overall
     bank = bank_risk(L, med, reno["level"])
     cost = cost_to_own(L, reno["score"], cost_cfg)
     passes = {}
@@ -106,16 +108,23 @@ def build_site(config: dict, store, generated: str) -> str:
     prev = store.previous_ranks()
 
     pool = [L for L in store.active_listings() if _in_envelope(L, browse)]
-    # per-city median €/m² so bank-risk can flag over-market pricing
-    by_city = {}
+    # Median €/m² so bank-risk can flag over-market pricing. Compared within the
+    # SAME property type (a detached house's €/m² isn't comparable to a flat's);
+    # a city-wide median mixing all types would flag normal houses as "expensive".
+    by_city, by_ct = {}, {}
     for L in pool:
         if L.price_per_m2 and L.city:
-            by_city.setdefault(L.city.strip().capitalize(), []).append(L.price_per_m2)
+            c = L.city.strip().capitalize()
+            by_city.setdefault(c, []).append(L.price_per_m2)
+            if L.property_type:
+                by_ct.setdefault((c, L.property_type), []).append(L.price_per_m2)
     medians = {c: statistics.median(v) for c, v in by_city.items() if v}
+    # type-specific median only when the bucket is big enough to be meaningful
+    type_medians = {k: statistics.median(v) for k, v in by_ct.items() if len(v) >= 8}
     overall = statistics.median([p for v in by_city.values() for p in v]) if by_city else None
     year_now = datetime.now(timezone.utc).year
     cost_cfg = config.get("web", {}).get("cost", {})
-    listings = [_candidate_payload(L, filters, scorers, prev, year_now, medians, overall, cost_cfg)
+    listings = [_candidate_payload(L, filters, scorers, prev, year_now, medians, type_medians, overall, cost_cfg)
                 for L in pool]
 
     data = {

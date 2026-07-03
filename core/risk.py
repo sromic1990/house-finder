@@ -125,12 +125,17 @@ def bank_risk(listing, median_ppm2: float | None, reno_level: str) -> dict:
         score += 0.25
         reasons.append("Optional-rental plot — partial plot-rent exposure")
     if reno_level == "high":
-        score += 0.25
+        score += 0.3
         reasons.append("Aging building may soon need renovation cash — a stretch with little savings")
     ppm2 = listing.price_per_m2
-    if ppm2 and median_ppm2 and ppm2 > 1.25 * median_ppm2:
-        score += 0.2
-        reasons.append("Price/m² well above the area norm — risk of borrowing more than the market value")
+    if ppm2 and median_ppm2:
+        ratio = ppm2 / median_ppm2
+        if ratio > 1.35:
+            score += 0.3
+            reasons.append("Price/m² well above comparable homes of this type nearby — if the bank values it lower, you'd need extra cash to bridge the gap")
+        elif ratio > 1.15:
+            score += 0.12
+            reasons.append("Price/m² modestly above the local norm for this property type")
     if listing.property_type in DETACHED:
         score += 0.1
         reasons.append("Detached house — no housing company to share surprise upkeep costs")
