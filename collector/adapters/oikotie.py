@@ -13,6 +13,7 @@ Ships behind sources.oikotie.enabled; no separate 'verified' flag needed now.
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -45,8 +46,12 @@ BUILDING_TYPE = {
 # House building-types fetched by default (rivitalo, paritalo, omakotitalo).
 DEFAULT_HOUSE_TYPES = [2, 4, 32]
 
-# Oikotie location tuple for Helsinki: [id, type, name].
-HELSINKI_LOCATION = '[[64,6,"Helsinki"]]'
+# Oikotie location tuples [id, type=6 (municipality), name]. Add more as needed.
+CITY_LOCATIONS = {
+    "helsinki": [64, 6, "Helsinki"],
+    "espoo": [49, 6, "Espoo"],
+    "vantaa": [92, 6, "Vantaa"],
+}
 
 
 class OikotieAdapter(SourceAdapter):
@@ -59,14 +64,21 @@ class OikotieAdapter(SourceAdapter):
             log.error("oikotie token bootstrap failed: %s", exc)
             return []
 
+        cities = search.get("cities") or [search.get("city", "Helsinki")]
         house_types = self.config.get("building_types", DEFAULT_HOUSE_TYPES)
         listings: list[Listing] = []
-        for bt in house_types:
-            try:
-                listings.extend(self._fetch_type(bt, search, tokens))
-            except Exception as exc:
-                log.error("oikotie buildingType=%s failed: %s", bt, exc)
-        log.info("oikotie: %d listings across types %s", len(listings), house_types)
+        for city in cities:
+            loc = CITY_LOCATIONS.get(city.lower())
+            if not loc:
+                log.warning("oikotie: no location code for %r — add it to CITY_LOCATIONS", city)
+                continue
+            loc_json = json.dumps([loc], separators=(",", ":"))
+            for bt in house_types:
+                try:
+                    listings.extend(self._fetch_type(bt, search, tokens, loc_json))
+                except Exception as exc:
+                    log.error("oikotie %s buildingType=%s failed: %s", city, bt, exc)
+        log.info("oikotie: %d listings across %s x types %s", len(listings), cities, house_types)
         return listings
 
     # ---- internals -------------------------------------------------------
@@ -83,11 +95,11 @@ class OikotieAdapter(SourceAdapter):
         return {"OTA-token": meta("api-token"), "OTA-loaded": meta("loaded"),
                 "OTA-cuid": meta("cuid")}
 
-    def _fetch_type(self, bt, search, tokens) -> list[Listing]:
+    def _fetch_type(self, bt, search, tokens, loc_json) -> list[Listing]:
         hdr = {**HEADERS, **tokens, "Accept": "application/json"}
         base_params = {
             "cardType": 100,
-            "locations": HELSINKI_LOCATION,
+            "locations": loc_json,
             "buildingType[]": bt,
             "sortBy": "published_sort_desc",
         }

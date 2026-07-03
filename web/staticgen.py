@@ -12,6 +12,8 @@ the map is off. All with no server.
 """
 from __future__ import annotations
 
+import base64
+import gzip
 import json
 import os
 from datetime import datetime, timezone
@@ -64,7 +66,8 @@ def _candidate_payload(L, filters, scorers, prev) -> dict:
         "price": L.price, "ppm2": L.price_per_m2, "size": L.size_m2,
         "rooms": L.rooms, "bedrooms": L.bedrooms, "year": L.year_built,
         "floor": L.floor, "type": L.property_type,
-        "address": L.address, "district": L.district, "city": L.city,
+        "address": L.address, "district": L.district,
+        "city": (L.city or "").strip().capitalize(),   # normalize "HELSINKI" -> "Helsinki"
         "lat": L.lat, "lon": L.lon,
         "photos": L.photos, "floor_plans": L.floor_plans, "features": L.features,
         "transit_min": min(tm.values()) if tm else None,
@@ -105,8 +108,10 @@ def build_site(config: dict, store, generated: str) -> str:
         "langs": LANG_NAMES,
     }
     css = (BASE / "static" / "style.css").read_text(encoding="utf-8") + _EXTRA_CSS
-    payload = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
-    return _TEMPLATE.replace("/*CSS*/", css).replace('"__DATA__"', payload)
+    # gzip + base64 the data so the (un-gzippable, encrypted) page stays small
+    raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    b64 = base64.b64encode(gzip.compress(raw, 6)).decode()
+    return _TEMPLATE.replace("/*CSS*/", css).replace("__DATA_B64__", b64)
 
 
 def write_site(config: dict, store, out_dir: str = "site") -> str:
@@ -139,6 +144,12 @@ _EXTRA_CSS = """
 .controls button.active{background:var(--ink);color:#fff;border-color:var(--ink)}
 .controls label{font-size:13px;color:var(--muted);font-weight:600}
 .count{color:var(--muted);font-size:13px;margin-left:auto}
+.rankbar,.citybar{display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin:0 0 12px}
+.bar-label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-right:2px}
+.rk,.ct{font-size:13px;font-weight:600;padding:6px 11px;border-radius:999px;border:1px solid var(--line);background:#fff;color:var(--muted);cursor:pointer;user-select:none}
+.rk.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.ct.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.rk:hover,.ct:hover{border-color:var(--ink)}
 .filters-panel{display:none;flex-wrap:wrap;gap:8px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
 .filters-panel.open{display:flex}
 .filters-panel .grp{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);width:100%;margin:6px 0 0}
@@ -202,7 +213,7 @@ _TEMPLATE = r"""<!doctype html>
 <style>/*CSS*/</style>
 </head>
 <body>
-<script id="data" type="application/json">"__DATA__"</script>
+<script id="data" type="application/octet-stream">__DATA_B64__</script>
 <div id="app"></div>
 <div class="modal-back" id="modalBack"><div class="modal"><div class="modal-inner">
   <button class="modal-close" id="modalClose">&times;</button>
@@ -218,7 +229,13 @@ _TEMPLATE = r"""<!doctype html>
   <button class="rf-close" id="rfClose">close</button>
 </div></div>
 <script>
-const DATA = JSON.parse(document.getElementById('data').textContent);
+(async () => {
+const _raw = document.getElementById('data').textContent.trim();
+let _json;
+try{ const _b=Uint8Array.from(atob(_raw),c=>c.charCodeAt(0));
+  _json=await new Response(new Blob([_b]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+}catch(e){ document.getElementById('app').innerHTML='<p style="padding:24px;font-family:sans-serif">Please open in a modern browser.</p>'; return; }
+const DATA = JSON.parse(_json);
 const EN = DATA.i18n.en;
 let lang = localStorage.getItem('lang') || 'en'; if(!DATA.i18n[lang]) lang='en';
 function t(k, vars){ let s=(DATA.i18n[lang]||{})[k]||EN[k]||k; if(vars) for(const p in vars) s=s.replace('{'+p+'}', vars[p]); return s; }
@@ -229,10 +246,12 @@ const PARK = {garage:'garage',hall:'parking hall',covered:'carport',own_spot:'ow
 
 // ---- state ----
 let mapOn = localStorage.getItem('mapOn')==='1';
-let currentSort = localStorage.getItem('sort')||'best';
+let rankBy = new Set((JSON.parse(localStorage.getItem('rankBy')||'null'))||['best']); if(!rankBy.size) rankBy=new Set(['best']);
 const FILTER_KEYS = DATA.criteria.filter(c=>c.kind==='filter').map(c=>c.key);
-const SCORERS = DATA.criteria.filter(c=>c.kind==='score');
-let enabled = new Set(DATA.criteria.map(c=>c.key));   // all on by default
+let enabled = new Set(DATA.criteria.map(c=>c.key));   // all criteria on by default
+const ALL_CITIES = [...new Set(DATA.listings.map(L=>L.city).filter(Boolean))].sort();
+let enabledCities = (()=>{ const s=JSON.parse(localStorage.getItem('cities')||'null');
+  const set=new Set(s? s.filter(c=>ALL_CITIES.includes(c)) : ALL_CITIES); return set.size?set:new Set(ALL_CITIES); })();
 
 // ---- compute ----
 function bd(L){ return L.bedrooms!=null?L.bedrooms:(L.rooms!=null?L.rooms-1:null); }
@@ -242,25 +261,35 @@ function scoreOf(L){
     if(c.prio){ prio+=c.raw*c.weight; pw+=c.weight; } else { num+=c.raw*c.weight; den+=c.weight; } }
   return {score: den?Math.round(1000*num/den)/10:0, priority: pw?prio/pw:0};
 }
-function included(L){ for(const k of FILTER_KEYS){ if(enabled.has(k) && L.pass[k]===false) return false; } return true; }
-const SORTS = {
-  best:     r=>[-(r.priority||0),-(r.score||0)],
-  price:    r=>[r.L.price==null?Infinity:r.L.price],
-  ppm2:     r=>[r.L.ppm2==null?Infinity:r.L.ppm2],
-  size:     r=>[r.L.size==null?Infinity:-r.L.size],
-  bedrooms: r=>[bd(r.L)==null?Infinity:-bd(r.L)],
-  transit:  r=>[r.L.transit_min==null?Infinity:r.L.transit_min],
-  station:  r=>[r.L.station_km==null?Infinity:r.L.station_km],
-  year:     r=>[r.L.year==null?Infinity:-r.L.year],
-  parking:  r=>[r.L.parking_rank==null?Infinity:-r.L.parking_rank],
+function included(L){
+  if(enabledCities.size && !enabledCities.has(L.city)) return false;
+  for(const k of FILTER_KEYS){ if(enabled.has(k) && L.pass[k]===false) return false; }
+  return true;
+}
+// rankable dimensions: value getter + whether higher is better
+const DIMS = {
+  best:{get:r=>r.score,hi:true}, price:{get:r=>r.L.price,hi:false}, ppm2:{get:r=>r.L.ppm2,hi:false},
+  size:{get:r=>r.L.size,hi:true}, bedrooms:{get:r=>bd(r.L),hi:true}, transit:{get:r=>r.L.transit_min,hi:false},
+  station:{get:r=>r.L.station_km,hi:false}, year:{get:r=>r.L.year,hi:true}, parking:{get:r=>r.L.parking_rank,hi:true},
 };
+const RANK_ORDER=[['best','sort_best'],['price','sort_price'],['ppm2','sort_ppm2'],['size','sort_size'],['bedrooms','sort_bedrooms'],['transit','sort_transit'],['station','sort_station'],['year','sort_year'],['parking','sort_parking']];
 function dedupKey(L){ const a=(L.address||'').toLowerCase().replace(/[^a-z0-9äöå]/g,''); return a?a+'|'+L.size+'|'+L.rooms:null; }
 function ranked(){
   let rows = DATA.listings.filter(included).map(L=>{ const s=scoreOf(L); return {L, score:s.score, priority:s.priority}; });
-  const f = SORTS[currentSort]||SORTS.best;
-  rows.sort((a,b)=>{ const ka=f(a),kb=f(b); for(let i=0;i<ka.length;i++){ if(ka[i]<kb[i])return -1; if(ka[i]>kb[i])return 1; }
-    return (b.priority-a.priority)||(b.score-a.score); });
-  const seen=new Set();                       // drop the same property cross-posted on both portals
+  const dims=[...rankBy].filter(d=>DIMS[d]); if(!dims.length) dims.push('best');
+  if(dims.length===1 && dims[0]==='best'){        // default: keep the own-land priority tier
+    rows.sort((a,b)=>(b.priority-a.priority)||(b.score-a.score));
+  } else {                                        // additive combination of the chosen dimensions
+    const range={};
+    for(const d of dims){ const vs=rows.map(r=>DIMS[d].get(r)).filter(v=>v!=null&&!isNaN(v)); range[d]=[Math.min(...vs),Math.max(...vs)]; }
+    rows.forEach(r=>{ let sum=0;
+      for(const d of dims){ const v=DIMS[d].get(r); let nv=0;
+        if(v!=null&&!isNaN(v)){ const a=range[d][0],b=range[d][1]; nv=(b===a)?1:(v-a)/(b-a); if(!DIMS[d].hi) nv=1-nv; }
+        sum+=nv; }
+      r.combo=sum/dims.length; });
+    rows.sort((a,b)=>(b.combo-a.combo)||(b.score-a.score));
+  }
+  const seen=new Set();                           // drop the same property cross-posted on both portals
   rows=rows.filter(r=>{ const k=dedupKey(r.L); if(!k) return true; if(seen.has(k)) return false; seen.add(k); return true; });
   rows.forEach((r,i)=>r.rank=i+1);
   return rows;
@@ -298,8 +327,8 @@ function wireCards(root){ root.querySelectorAll('.card').forEach(c=>c.onclick=()
 function render(){
   document.documentElement.lang=lang;
   const langs=Object.keys(DATA.langs).map(c=>'<a href="#" class="lang '+(c===lang?'active':'')+'" data-lang="'+c+'">'+DATA.langs[c]+'</a>').join('');
-  const sortOpts=[['best','sort_best'],['price','sort_price'],['ppm2','sort_ppm2'],['size','sort_size'],['bedrooms','sort_bedrooms'],['transit','sort_transit'],['station','sort_station'],['year','sort_year'],['parking','sort_parking']]
-    .map(o=>'<option value="'+o[0]+'"'+(o[0]===currentSort?' selected':'')+'>'+esc(t(o[1]))+'</option>').join('');
+  const rankChips=RANK_ORDER.map(o=>'<span class="rk '+(rankBy.has(o[0])?'on':'')+'" data-rk="'+o[0]+'">'+esc(t(o[1]))+'</span>').join('');
+  const cityChips=ALL_CITIES.map(c=>'<span class="ct '+(enabledCities.has(c)?'on':'')+'" data-ct="'+esc(c)+'">'+esc(c)+'</span>').join('');
   document.getElementById('app').innerHTML=
     '<header class="site-header"><a class="brand" href="#">🏠 '+esc(DATA.title)+'</a>'
     +'<nav><a href="#" id="mapToggle" class="'+(mapOn?'active':'')+'">🗺 '+esc(t('map_view'))+'</a><span class="langs">'+langs+'</span></nav></header>'
@@ -307,13 +336,19 @@ function render(){
     +'<p>'+esc(t('index_sub',{top_n:DATA.top_n}))+' <span class="stamp">· '+esc(DATA.generated)+'</span></p></div>'
     +'<div class="controls"><button id="filtersBtn">⚙ '+esc(t('filters'))+'</button>'
     +(DATA.dispatch?'<button id="refreshBtn">🔄 '+esc(t('rf_button'))+'</button>':'')
-    +'<label>'+esc(t('sort_by'))+' <select id="sortSel">'+sortOpts+'</select></label>'
     +'<span class="count" id="count"></span></div>'
+    +'<div class="rankbar"><span class="bar-label">'+esc(t('sort_by'))+'</span>'+rankChips+'</div>'
+    +(ALL_CITIES.length>1?'<div class="citybar"><span class="bar-label">'+esc(t('cities_label'))+'</span>'+cityChips+'</div>':'')
     +'<div class="filters-panel" id="filtersPanel"></div>'
     +'<div id="content"></div></main>';
   buildFiltersPanel();
   document.querySelectorAll('.lang').forEach(a=>a.onclick=e=>{e.preventDefault();lang=a.dataset.lang;localStorage.setItem('lang',lang);render();});
-  document.getElementById('sortSel').onchange=e=>{currentSort=e.target.value;localStorage.setItem('sort',currentSort);renderContent();};
+  document.querySelectorAll('.rk').forEach(el=>el.onclick=()=>{ const k=el.dataset.rk;
+    if(rankBy.has(k)){ if(rankBy.size>1) rankBy.delete(k); } else rankBy.add(k);
+    localStorage.setItem('rankBy',JSON.stringify([...rankBy])); el.classList.toggle('on',rankBy.has(k)); renderContent(); });
+  document.querySelectorAll('.ct').forEach(el=>el.onclick=()=>{ const c=el.dataset.ct;
+    if(enabledCities.has(c)){ if(enabledCities.size>1) enabledCities.delete(c); } else enabledCities.add(c);
+    localStorage.setItem('cities',JSON.stringify([...enabledCities])); el.classList.toggle('on',enabledCities.has(c)); renderContent(); });
   document.getElementById('filtersBtn').onclick=()=>document.getElementById('filtersPanel').classList.toggle('open');
   document.getElementById('mapToggle').onclick=e=>{e.preventDefault();mapOn=!mapOn;localStorage.setItem('mapOn',mapOn?'1':'0');render();};
   if(DATA.dispatch){ const rb=document.getElementById('refreshBtn'); if(rb) rb.onclick=doRefresh; }
@@ -439,6 +474,7 @@ document.getElementById('modalClose').onclick=closeModal;
 document.getElementById('modalBack').onclick=e=>{ if(e.target.id==='modalBack') closeModal(); };
 document.getElementById('rfClose').onclick=()=>{ rfCancelled=true; rfBusy=false; document.getElementById('rfOverlay').classList.remove('open'); };
 render();
+})();
 </script>
 </body>
 </html>"""

@@ -7,7 +7,7 @@
 # What to collect ----------------------------------------------------------
 search:
   deal_type: sale            # sale | rent
-  city: Helsinki
+  cities: [Helsinki, Espoo, Vantaa]   # add/remove capital-region cities here
   # Optional coarse pre-filters applied at the source when supported.
   # These reduce how much we fetch; fine ranking still happens via `criteria`.
   price_max: 400000

@@ -127,8 +127,12 @@ def notify_new_top_entries(previous_ranks, ranked, *, config, mailer=None,
         return entries if entries else []
 
     mailer = mailer or default_mailer()
-    subject = (f"🏠 New #{entries[0].rank} in your Helsinki leaderboard: "
+    subject = (f"🏠 New #{entries[0].rank} in your leaderboard: "
                f"{entries[0].listing.title}") if len(entries) == 1 else \
               f"🏠 {len(entries)} new listings in your top {top_n}"
-    mailer.send(subject, render_email(entries, board_url, top_n), to)
+    try:                    # best-effort: a mail hiccup must not abort the run/render
+        mailer.send(subject, render_email(entries, board_url, top_n), to)
+    except Exception as exc:
+        import logging
+        logging.getLogger("notify").error("email send failed (continuing): %s", exc)
     return entries

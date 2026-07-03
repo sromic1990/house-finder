@@ -53,15 +53,16 @@ class EtuoviAdapter(SourceAdapter):
 
     def fetch(self, search: dict) -> list[Listing]:
         house_types = self.config.get("house_types", DEFAULT_HOUSE_TYPES)
-        city = (search.get("city") or "helsinki").lower()
+        cities = search.get("cities") or [search.get("city", "helsinki")]
         max_pages = int(self.config.get("max_pages", 20))
         listings: list[Listing] = []
-        for htype in house_types:
-            try:
-                listings.extend(self._fetch_type(htype, city, max_pages))
-            except Exception as exc:
-                log.error("etuovi type %s failed: %s", htype, exc)
-        log.info("etuovi: %d listings across %d types", len(listings), len(house_types))
+        for city in cities:
+            for htype in house_types:
+                try:
+                    listings.extend(self._fetch_type(htype, city.lower(), max_pages))
+                except Exception as exc:
+                    log.error("etuovi %s type %s failed: %s", city, htype, exc)
+        log.info("etuovi: %d listings across %s x %d types", len(listings), cities, len(house_types))
         return listings
 
     def _fetch_type(self, htype, city, max_pages) -> list[Listing]:

@@ -486,6 +486,25 @@ class TransitProximity(ScoreCriterion):
         ("Malmi", 60.2510, 25.0110), ("Tikkurila", 60.2920, 25.0440),
         ("Huopalahti", 60.2180, 24.8930), ("Kannelmäki", 60.2430, 24.8830),
         ("Pohjois-Haaga", 60.2280, 24.8930), ("Leppävaara", 60.2190, 24.8130),
+        # Espoo — West Metro
+        ("Koivusaari", 60.1583, 24.8869), ("Keilaniemi", 60.1755, 24.8285),
+        ("Aalto-yliopisto", 60.1846, 24.8255), ("Tapiola", 60.1759, 24.8046),
+        ("Urheilupuisto", 60.1720, 24.7906), ("Niittykumpu", 60.1698, 24.7770),
+        ("Matinkylä", 60.1600, 24.7385), ("Finnoo", 60.1520, 24.7290),
+        ("Kaitaa", 60.1530, 24.7050), ("Soukka", 60.1460, 24.6870),
+        ("Espoonlahti", 60.1490, 24.6600), ("Kivenlahti", 60.1530, 24.6470),
+        # Espoo — commuter rail (Rantarata)
+        ("Kilo", 60.2160, 24.8010), ("Kera", 60.2185, 24.7760),
+        ("Kauniainen", 60.2115, 24.7290), ("Koivuhovi", 60.2185, 24.7040),
+        ("Tuomarila", 60.2230, 24.6820), ("Espoon keskus", 60.2255, 24.6560),
+        ("Kauklahti", 60.2010, 24.6060),
+        # Vantaa — Ring Rail + main line
+        ("Hiekkaharju", 60.3010, 25.0430), ("Rekola", 60.3130, 25.0760),
+        ("Koivukylä", 60.3230, 25.0630), ("Aviapolis", 60.2930, 24.9560),
+        ("Lentoasema", 60.3120, 24.9670), ("Leinelä", 60.2990, 25.0270),
+        ("Kivistö", 60.3120, 24.8460), ("Vantaankoski", 60.2920, 24.8420),
+        ("Myyrmäki", 60.2610, 24.8540), ("Louhela", 60.2680, 24.8480),
+        ("Martinlaakso", 60.2760, 24.8470),
     ]
 
     def applies(self, listing) -> bool:
