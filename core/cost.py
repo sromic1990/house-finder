@@ -1,21 +1,25 @@
-"""Fixed monthly cost to own — EXCLUDING any mortgage.
+"""Fixed monthly cost to own — EXCLUDING your personal home loan.
 
-The mortgage depends on your down payment, rate and term (your decisions), so
-we don't guess it. Instead we surface the costs you can't avoid, so you can size
-a mortgage that keeps your total within budget:
+Your mortgage depends on your down payment, rate and term (your decisions), so
+we don't guess it. Instead we surface the fixed monthly costs you can't avoid,
+so you can size a mortgage that keeps your total within budget:
 
-  charges     — the monthly maintenance charge (hoitovastike) scraped from the
+  maintenance — the monthly upkeep charge (hoitovastike) scraped from the
                 listing. For a detached house (no taloyhtiö) it's a per-m²
                 running-cost estimate (heating, water, insurance, property tax,
                 upkeep), flagged as estimated.
+  financing   — the taloyhtiö loan payment already attached to the flat
+                (pääomavastike / rahoitusvastike), scraped from the listing.
+                Together with maintenance this is the "Yhtiövastike yhteensä"
+                the portal shows, so our total is never below the site's figure.
+                (If you instead buy the flat debt-free / velaton, this amount
+                folds into YOUR mortgage rather than a monthly vastike.)
   renovation  — an ESTIMATE of money to set aside monthly for big renovations
                 over the next 5 years, weighted by the (renovation-aware) risk
-                score. This is the "surprises" line.
+                score. This is the "surprises" line — the only estimated part
+                when the charges are scraped.
 
-Also reported for context (NOT added to the fixed total, because it's financing
-you can choose to keep or buy out with a bigger mortgage):
-  financing_fee — the taloyhtiö loan payment (pääomavastike / rahoitusvastike).
-  charge_total  — total monthly vastike incl. that company loan.
+Excluded on purpose: your own home loan (mortgage) — you size that against this.
 """
 from __future__ import annotations
 
@@ -34,19 +38,30 @@ def cost_to_own(listing, reno_score: float, cfg: dict | None = None) -> dict:
     f = listing.features
 
     maint = f.get("maintenance")
-    if maint is not None:
-        charges, charges_est = maint, False
-    elif listing.property_type in DETACHED:
-        charges, charges_est = size * c["detached_running_per_m2"], True
-    else:
-        charges, charges_est = size * c["est_charge_per_m2"], True
+    fin = f.get("financing_fee") or 0.0
+    total_stated = f.get("charge_total")
 
+    if maint is not None:
+        # Full monthly vastike = maintenance + any company-loan share (pääomavastike).
+        maintenance, financing, charges_est = maint, fin, False
+    elif total_stated:
+        # Only the combined "Yhtiövastike yhteensä" is stated — use it as one line.
+        maintenance, financing, charges_est = total_stated, 0.0, False
+    elif listing.property_type in DETACHED:
+        maintenance, financing, charges_est = size * c["detached_running_per_m2"], 0.0, True
+    else:
+        maintenance, financing, charges_est = size * c["est_charge_per_m2"], 0.0, True
+
+    charges = maintenance + financing
     reno_monthly = (reno_score * c["reno_per_m2"] * size) / 60.0
     fixed = charges + reno_monthly
     return {
-        "monthly": round(fixed),            # fixed cost, EXCLUDING mortgage
-        "breakdown": {"charges": round(charges), "renovation": round(reno_monthly)},
-        "financing_fee": round(f["financing_fee"]) if f.get("financing_fee") else None,
+        "monthly": round(fixed),            # fixed cost, EXCLUDING your mortgage
+        "breakdown": {
+            "maintenance": round(maintenance),
+            "financing": round(financing),
+            "renovation": round(reno_monthly),
+        },
         "charge_total": round(f["charge_total"]) if f.get("charge_total") else None,
         "five_year": round(fixed * 60),
         "charges_estimated": charges_est,

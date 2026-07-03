@@ -356,9 +356,11 @@ function ranked(){
     if(!cur || rich(r)>rich(cur) || (rich(r)===rich(cur) && ((r.priority-cur.priority)||(r.score-cur.score))>0)) best.set(k,r);
   }
   rows=[...best.values(), ...singles];
+  // Own plot ALWAYS beats a rented plot, in every ranking mode (own > unknown > rented).
+  const landTier=r=>{ const v=r.L.features&&r.L.features.land_ownership; return v==='own'?2:(v==='rented'?0:1); };
   const dims=[...rankBy].filter(d=>DIMS[d]); if(!dims.length) dims.push('best');
   if(dims.length===1 && dims[0]==='best'){        // default: keep the own-land priority tier
-    rows.sort((a,b)=>(b.priority-a.priority)||(b.score-a.score));
+    rows.sort((a,b)=>(landTier(b)-landTier(a))||(b.priority-a.priority)||(b.score-a.score));
   } else {                                        // additive combination of the chosen dimensions
     const range={};
     for(const d of dims){ const vs=rows.map(r=>DIMS[d].get(r)).filter(v=>v!=null&&!isNaN(v)); range[d]=[Math.min(...vs),Math.max(...vs)]; }
@@ -367,7 +369,7 @@ function ranked(){
         if(v!=null&&!isNaN(v)){ const a=range[d][0],b=range[d][1]; nv=(b===a)?1:(v-a)/(b-a); if(!DIMS[d].hi) nv=1-nv; }
         sum+=nv; }
       r.combo=sum/dims.length; });
-    rows.sort((a,b)=>(b.combo-a.combo)||(b.score-a.score));
+    rows.sort((a,b)=>(landTier(b)-landTier(a))||(b.combo-a.combo)||(b.score-a.score));
   }
   rows.forEach((r,i)=>r.rank=i+1);
   return rows;
@@ -412,14 +414,14 @@ function riskSection(L){
 function costSection(L){
   if(!L.cost) return '';
   const c=L.cost, b=c.breakdown;
-  const row=(k,v,cls)=>'<tr'+(cls?' class="'+cls+'"':'')+'><th>'+esc(t(k))+'</th><td>'+euro(v)+' / '+esc(t('per_month'))+'</td></tr>';
+  const row=(k,v)=>'<tr><th>'+esc(t(k))+'</th><td>'+euro(v)+' / '+esc(t('per_month'))+'</td></tr>';
   let reno='';
   if(L.reno_planned) reno+='<div class="reno-list"><b>'+esc(t('reno_planned_label'))+':</b> '+esc(L.reno_planned)+'</div>';
   if(L.reno_done) reno+='<div class="reno-list"><b>'+esc(t('reno_done_label'))+':</b> '+esc(L.reno_done)+'</div>';
-  const fin = c.financing_fee ? row('cost_financing', c.financing_fee, 'cost-info') : '';
+  const fin = b.financing ? row('cost_financing', b.financing) : '';
   return '<section class="cost-box"><h2>'+esc(t('cost_heading'))+'</h2>'
     +'<div class="cost-big">≈ '+euro(c.monthly)+' / '+esc(t('per_month'))+'</div>'
-    +'<table>'+row('cost_charges',b.charges)+row('cost_renovation',b.renovation)+fin+'</table>'
+    +'<table>'+row('cost_charges',b.maintenance)+fin+row('cost_renovation',b.renovation)+'</table>'
     +reno
     +'<div class="risk-disc">'+esc(t('cost_note'))+(c.charges_estimated?' '+esc(t('cost_charges_est')):'')+'</div></section>';
 }
