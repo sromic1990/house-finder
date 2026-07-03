@@ -34,9 +34,19 @@ _PLUMB_DONE = re.compile(
 # Planned pipe work — any mention in the upcoming list is a strong signal.
 _PLUMB_PLAN = re.compile(r"putkiremon\w*|linjasaneera\w*|(?:putki|viemär|käyttövesi)\w*", re.I)
 _MAJOR_PLAN = re.compile(r"julkisivu\w*|vesikat\w*|(?:^| )katto\w*|ikkun\w*|salaoj\w*|parveke\w*", re.I)
-# A history of water / moisture / mould / rot damage — a red flag, not reassurance.
-_WATER = re.compile(r"vesivahin\w*|kosteusvaur\w*|kosteusvahin\w*|homevaur\w*|"
-                    r"salaojavesivah\w*|lahovaur\w*", re.I)
+# A history of ANY damage is a red flag, not reassurance: water/moisture/mould/
+# rot, fire, frost-heave, cracks, settling, or a bare "…vaurio" / "…vahinko".
+_DAMAGE = re.compile(
+    r"\w*vauri\w*|\w*vahin\w*|home(?:htu|vaur)\w*|laho\w*|"
+    r"routi\w*|halkeam\w*|halkeil\w*|painum\w*|mikrobi\w*", re.I)
+# "…ei havaittu / ei todettu / ei merkkejä vaurioita" — a clean report, not damage.
+_NO_DAMAGE = re.compile(
+    r"ei\s+(?:ole\s+|ollut\s+)?(?:havait\w*|todet\w*|löyt\w*|merkke\w*|viittei\w*|"
+    r"merkkejä\w*)[^.,;:]*", re.I)
+
+
+def _damage_hits(text: str) -> int:
+    return len(_DAMAGE.findall(_NO_DAMAGE.sub(" ", text or "")))
 
 
 def _level(score: float, med: float, hi: float) -> str:
@@ -85,12 +95,13 @@ def renovation_risk(listing, year_now: int) -> dict:
     else:
         reasons.append(age_msg)
 
-    # 3. A history of water / moisture damage is a red flag — raise, don't lower.
-    water_hits = len(_WATER.findall(done)) + len(_WATER.findall(planned))
-    if water_hits:
-        base = min(1.0, base + (0.12 if water_hits == 1 else 0.24))
-        reasons.insert(0, "Listing notes " + ("a past" if water_hits == 1 else "repeated")
-                       + " water/moisture damage — inspect the condition report carefully")
+    # 3. A history of ANY damage (water, fire, frost, cracks, settling, mould…)
+    #    is a red flag — raise, don't lower. "No damage found" is scrubbed first.
+    damage_hits = _damage_hits(done) + _damage_hits(planned)
+    if damage_hits:
+        base = min(1.0, base + (0.12 if damage_hits == 1 else 0.24))
+        reasons.insert(0, "Listing notes " + ("a past" if damage_hits == 1 else "repeated")
+                       + " damage (water, structural or other) — inspect the condition report carefully")
 
     # 4. Structural modifiers.
     if detached:
