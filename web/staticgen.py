@@ -23,6 +23,7 @@ from pathlib import Path
 from core.criteria import build_criteria
 from core.criteria.builtins import TransitProximity, haversine_km
 from core.i18n import LANG_NAMES, TRANSLATIONS
+from core.cost import cost_to_own
 from core.risk import bank_risk, renovation_risk
 
 BASE = Path(__file__).parent
@@ -51,11 +52,12 @@ def _in_envelope(L, browse) -> bool:
     return True
 
 
-def _candidate_payload(L, filters, scorers, prev, year_now, medians, overall) -> dict:
+def _candidate_payload(L, filters, scorers, prev, year_now, medians, overall, cost_cfg) -> dict:
     tm = L.features.get("transit_minutes") or {}
     reno = renovation_risk(L, year_now)
     med = medians.get((L.city or "").strip().capitalize(), overall)
     bank = bank_risk(L, med, reno["level"])
+    cost = cost_to_own(L, reno["score"], cost_cfg)
     passes = {}
     for f in filters:
         try:
@@ -90,7 +92,9 @@ def _candidate_payload(L, filters, scorers, prev, year_now, medians, overall) ->
         "new": L.uid not in prev,
         "prev_price": L.prev_price, "dropped_at": L.price_dropped_at,
         "pass": passes, "contribs": contribs,
-        "reno_risk": reno, "bank_risk": bank,
+        "reno_risk": reno, "bank_risk": bank, "cost": cost,
+        "reno_planned": L.features.get("reno_planned"),
+        "reno_done": L.features.get("reno_done"),
     }
 
 
@@ -110,7 +114,9 @@ def build_site(config: dict, store, generated: str) -> str:
     medians = {c: statistics.median(v) for c, v in by_city.items() if v}
     overall = statistics.median([p for v in by_city.values() for p in v]) if by_city else None
     year_now = datetime.now(timezone.utc).year
-    listings = [_candidate_payload(L, filters, scorers, prev, year_now, medians, overall) for L in pool]
+    cost_cfg = config.get("web", {}).get("cost", {})
+    listings = [_candidate_payload(L, filters, scorers, prev, year_now, medians, overall, cost_cfg)
+                for L in pool]
 
     data = {
         "title": config.get("web", {}).get("title", "House Leaderboard"),
@@ -206,6 +212,15 @@ _EXTRA_CSS = """
 .modal-inner{padding:20px 22px 30px}
 .modal-close{position:sticky;top:0;float:right;background:#fff;border:1px solid var(--line);width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:18px}
 .excluded-hint{color:var(--muted);font-size:13px;margin:8px 0 0}
+.cost-line{margin-top:6px;font-weight:800;font-size:14px;color:#1a1a1a}
+.cost-line .cost-sub{font-weight:600;font-size:11.5px;color:var(--muted)}
+.cost-box{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:24px}
+.cost-box h2{font-size:16px;margin:2px 0 8px}
+.cost-big{font-size:24px;font-weight:800;margin-bottom:10px}
+.cost-box table{width:100%;border-collapse:collapse;margin-bottom:8px}
+.cost-box th{text-align:left;color:var(--muted);font-weight:500;padding:5px 0}
+.cost-box td{text-align:right;padding:5px 0;font-weight:600}
+.reno-list{font-size:13px;color:#444;margin:6px 0;line-height:1.45}
 .drop-badge{position:absolute;bottom:10px;left:10px;background:#e03131;color:#fff;font-weight:800;font-size:11px;padding:3px 8px;border-radius:6px}
 .drop-was{color:#e03131;font-weight:700;font-size:12.5px}
 .risks{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
@@ -325,11 +340,21 @@ const DIMS = {
   size:{get:r=>r.L.size,hi:true}, bedrooms:{get:r=>bd(r.L),hi:true}, transit:{get:r=>r.L.transit_min,hi:false},
   station:{get:r=>r.L.station_km,hi:false}, year:{get:r=>r.L.year,hi:true}, parking:{get:r=>r.L.parking_rank,hi:true},
   bank_safe:{get:r=>r.L.bank_risk?r.L.bank_risk.score:null,hi:false}, reno_safe:{get:r=>r.L.reno_risk?r.L.reno_risk.score:null,hi:false},
+  cost5y:{get:r=>r.L.cost?r.L.cost.monthly:null,hi:false},
 };
-const RANK_ORDER=[['best','sort_best'],['price','sort_price'],['ppm2','sort_ppm2'],['size','sort_size'],['bedrooms','sort_bedrooms'],['transit','sort_transit'],['station','sort_station'],['year','sort_year'],['parking','sort_parking'],['reno_safe','sort_reno'],['bank_safe','sort_bank']];
+const RANK_ORDER=[['best','sort_best'],['price','sort_price'],['cost5y','sort_cost'],['ppm2','sort_ppm2'],['size','sort_size'],['bedrooms','sort_bedrooms'],['transit','sort_transit'],['station','sort_station'],['year','sort_year'],['parking','sort_parking'],['reno_safe','sort_reno'],['bank_safe','sort_bank']];
 function dedupKey(L){ const a=(L.address||'').toLowerCase().replace(/[^a-z0-9äöå]/g,''); return a?a+'|'+L.size+'|'+L.rooms:null; }
 function ranked(){
   let rows = DATA.listings.filter(included).map(L=>{ const s=scoreOf(L); return {L, score:s.score, priority:s.priority}; });
+  // de-dup cross-posted copies, keeping the one with the most detail data
+  const rich = r => ((r.L.features&&r.L.features.maintenance!=null)?2:0)+(r.L.reno_planned?1:0)+((r.L.features&&r.L.features.land_ownership)?1:0);
+  const best=new Map(), singles=[];
+  for(const r of rows){ const k=dedupKey(r.L);
+    if(!k){ singles.push(r); continue; }
+    const cur=best.get(k);
+    if(!cur || rich(r)>rich(cur) || (rich(r)===rich(cur) && ((r.priority-cur.priority)||(r.score-cur.score))>0)) best.set(k,r);
+  }
+  rows=[...best.values(), ...singles];
   const dims=[...rankBy].filter(d=>DIMS[d]); if(!dims.length) dims.push('best');
   if(dims.length===1 && dims[0]==='best'){        // default: keep the own-land priority tier
     rows.sort((a,b)=>(b.priority-a.priority)||(b.score-a.score));
@@ -343,8 +368,6 @@ function ranked(){
       r.combo=sum/dims.length; });
     rows.sort((a,b)=>(b.combo-a.combo)||(b.score-a.score));
   }
-  const seen=new Set();                           // drop the same property cross-posted on both portals
-  rows=rows.filter(r=>{ const k=dedupKey(r.L); if(!k) return true; if(seen.has(k)) return false; seen.add(k); return true; });
   rows.forEach((r,i)=>r.rank=i+1);
   return rows;
 }
@@ -372,6 +395,7 @@ function card(r){
     +'<div class="card-media">'+img+'<span class="rank-badge">#'+r.rank+'</span><span class="score-badge">'+r.score+'</span>'+(L.new?'<span class="new-badge">'+esc(t('badge_new'))+'</span>':'')+(d?'<span class="drop-badge">▼ '+euroK(d.amt)+'</span>':'')+'</div>'
     +'<div class="card-body"><div class="card-title">'+esc(L.title)+'</div>'
     +'<div class="card-price">'+euro(L.price)+(d?' <span class="drop-was">↓ '+euro(d.amt)+' · '+esc(t('was'))+' '+euro(d.prev)+'</span>':'')+(L.ppm2?' <span class="ppm2">· '+euro(L.ppm2)+'/m²</span>':'')+'</div>'
+    +(L.cost?'<div class="cost-line" title="'+esc(t('cost_heading'))+'">≈ '+euro(L.cost.monthly)+' / '+esc(t('per_month'))+' <span class="cost-sub">'+esc(t('cost_tag'))+(L.cost.charges_estimated?' *':'')+'</span></div>':'')
     +'<div class="card-facts">'+fa+'</div><div class="card-chips">'+chips+'</div>'
     +'<div class="risks">'+riskPill('bank_label',L.bank_risk)+riskPill('reno_label',L.reno_risk)+'</div>'
     +'<a class="src-link-card" href="'+esc(L.url)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+esc(t('view_on',{source:L.source}))+'</a></div></article>';
@@ -383,6 +407,19 @@ function riskSection(L){
   if(!L.bank_risk && !L.reno_risk) return '';
   return '<section class="risk-box"><h2>'+esc(t('risk_heading'))+'</h2>'+row('bank_label',L.bank_risk)+row('reno_label',L.reno_risk)
     +'<div class="risk-disc">'+esc(t('risk_disclaimer'))+'</div></section>';
+}
+function costSection(L){
+  if(!L.cost) return '';
+  const b=L.cost.breakdown, a=L.cost.assumptions;
+  const row=(k,v)=>'<tr><th>'+esc(t(k))+'</th><td>'+euro(v)+' / '+esc(t('per_month'))+'</td></tr>';
+  let reno='';
+  if(L.reno_planned) reno+='<div class="reno-list"><b>'+esc(t('reno_planned_label'))+':</b> '+esc(L.reno_planned)+'</div>';
+  if(L.reno_done) reno+='<div class="reno-list"><b>'+esc(t('reno_done_label'))+':</b> '+esc(L.reno_done)+'</div>';
+  return '<section class="cost-box"><h2>'+esc(t('cost_heading'))+'</h2>'
+    +'<div class="cost-big">≈ '+euro(L.cost.monthly)+' / '+esc(t('per_month'))+'</div>'
+    +'<table>'+row('cost_mortgage',b.mortgage)+row('cost_charges',b.charges)+row('cost_renovation',b.renovation)+'</table>'
+    +reno
+    +'<div class="risk-disc">'+esc(t('cost_assump',{down:Math.round(a.down_pct*100),rate:(a.rate*100).toFixed(1),years:a.years}))+(L.cost.charges_estimated?' '+esc(t('cost_charges_est')):'')+'</div></section>';
 }
 
 // ---- render shell ----
@@ -528,6 +565,7 @@ function openModal(id){
     +(gallery?'<div class="gallery" style="margin-top:16px">'+gallery+'</div>':'')
     +'<div class="detail-cols"><section class="facts-box"><h2>'+esc(t('key_facts'))+'</h2>'+facts(L)+'</section>'
     +'<section class="score-box"><h2>'+esc(t('why_rank'))+'</h2><ul class="score-list">'+bars+'</ul></section></div>'
+    +costSection(L)
     +riskSection(L)
     +(plans?'<section><h2>'+esc(t('floor_plan'))+'</h2><div class="gallery">'+plans+'</div></section>':'')
     +(L.lat&&L.lon?'<section><h2>'+esc(t('location'))+'</h2><div id="dmap" style="height:320px;border-radius:12px"></div></section>':'');

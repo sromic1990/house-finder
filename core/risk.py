@@ -57,6 +57,21 @@ def renovation_risk(listing, year_now: int) -> dict:
     if energy in ("E", "F", "G"):
         base = min(1.0, base + 0.1)
         reasons.append(f"Energy class {energy} — possible energy-efficiency upgrades")
+
+    # Use the taloyhtiö's ACTUAL listed renovations when we have them.
+    planned = (listing.features.get("reno_planned") or "").lower()
+    done = (listing.features.get("reno_done") or "").lower()
+    _plumbing = ("putki", "linjasan", "viemär", "käyttövesi")
+    _major = _plumbing + ("julkisivu", "vesikat", " katto", "ikkun", "salaoja", "parveke")
+    if any(w in planned for w in _plumbing):
+        base = max(base, 0.85)
+        reasons.insert(0, "Major plumbing (putkiremontti) is in the taloyhtiö's upcoming plan")
+    elif any(w in planned for w in _major):
+        base = max(base, 0.62)
+        reasons.insert(0, "A major renovation (facade/roof/windows) is in the upcoming plan")
+    if any(w in done for w in _plumbing):
+        base = min(base, 0.35)
+        reasons.insert(0, "Major plumbing already done — that big-ticket renovation is behind you")
     return {"score": round(base, 2), "level": _level(base, 0.4, 0.66), "reasons": reasons}
 
 

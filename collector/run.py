@@ -84,16 +84,20 @@ def collect_once(config: dict, store: Store) -> dict:
     for r in candidates:
         L = r.listing
         changed = False
-        if "land_ownership" not in L.features or "parking" not in L.features:
+        if not L.features.get("detail_fetched"):
             detail = fetch_detail(L.url)
-            if detail.get("land_ownership") and "land_ownership" not in L.features:
-                L.features["land_ownership"] = detail["land_ownership"]
+            if detail:
+                L.features["detail_fetched"] = True
+                for k in ("land_ownership", "maintenance", "financing_fee",
+                          "charge_total", "reno_planned", "reno_done"):
+                    v = detail.get(k)
+                    if v is not None and k not in L.features:
+                        L.features[k] = v
+                if detail.get("parking"):
+                    best = better_parking(L.features.get("parking"), detail["parking"])
+                    if best != L.features.get("parking"):
+                        L.features["parking"] = best
                 changed = True
-            if detail.get("parking"):
-                best = better_parking(L.features.get("parking"), detail["parking"])
-                if best != L.features.get("parking"):
-                    L.features["parking"] = best
-                    changed = True
         if search.get("enrich_transit") and not L.features.get("transit_minutes") \
                 and L.lat is not None:
             tm = transit_minutes(L.lat, L.lon)

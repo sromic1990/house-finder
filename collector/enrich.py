@@ -100,4 +100,38 @@ def fetch_detail(url: str) -> dict:
     parking = better_parking(parking, _own_spot(text))
     if parking:
         out["parking"] = parking
+
+    # Monthly charges + planned/done renovations (both sources render these).
+    flat = re.sub(r"\s+", " ", text)
+
+    def _fee(*labels):
+        for lab in labels:
+            m = re.search(lab + r"\s*([\d.,  ]+?)\s*€", flat)
+            if m and (v := _money(m.group(1))):
+                return v
+        return None
+
+    def _section(label):
+        m = re.search(re.escape(label) + r"\s+(.{5,220})", flat)
+        if not m:
+            return None
+        seg = re.split(r"(Tehdyt remontit|Tulevat remontit|Lisätietoa|Energialuokka|"
+                       r"Muut maksut|Rakennus|Isännöi|Kohde on)", m.group(1))[0]
+        return seg.strip()[:200] or None
+
+    for key, val in (("maintenance", _fee("Hoitovastike")),
+                     ("financing_fee", _fee("Pääomavastike", "Rahoitusvastike")),
+                     ("charge_total", _fee("Yhtiövastike yhteensä")),
+                     ("reno_planned", _section("Tulevat remontit")),
+                     ("reno_done", _section("Tehdyt remontit"))):
+        if val is not None:
+            out[key] = val
     return out
+
+
+def _money(s: str):
+    v = re.sub(r"[^\d,]", "", s or "")   # Finnish: space thousands, comma decimal
+    try:
+        return float(v.replace(",", ".")) if v else None
+    except ValueError:
+        return None
