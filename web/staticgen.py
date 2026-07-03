@@ -93,6 +93,14 @@ def build_site(config: dict, store, generated: str) -> str:
         "criteria": ([{"key": c.key, "title": c.title, "kind": "filter"} for c in filters]
                      + [{"key": c.key, "title": c.title, "kind": "score",
                          "weight": c.weight, "priority": c.is_priority} for c in scorers]),
+        # Manual-refresh button config — embedded ONLY when both a dispatch token
+        # and a site passphrase are present (i.e. the output will be encrypted),
+        # so the token never lands in a plaintext page.
+        "dispatch": ({"repo": os.getenv("GH_REPO", ""),
+                      "workflow": os.getenv("GH_WORKFLOW", "update.yml"),
+                      "ref": os.getenv("GH_REF", "main"),
+                      "token": os.getenv("GH_DISPATCH_TOKEN")}
+                     if os.getenv("GH_DISPATCH_TOKEN") and os.getenv("SITE_PASSWORD") else None),
         "i18n": TRANSLATIONS,
         "langs": LANG_NAMES,
     }
@@ -158,6 +166,29 @@ _EXTRA_CSS = """
 .modal-inner{padding:20px 22px 30px}
 .modal-close{position:sticky;top:0;float:right;background:#fff;border:1px solid var(--line);width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:18px}
 .excluded-hint{color:var(--muted);font-size:13px;margin:8px 0 0}
+#refreshBtn{background:var(--top);color:#fff;border-color:var(--top)}
+#refreshBtn:disabled{opacity:.6;cursor:default}
+.rf-overlay{position:fixed;inset:0;background:rgba(8,10,14,.74);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:2000}
+.rf-overlay.open{display:flex}
+.rf-card{background:#12151b;color:#e8eaed;border:1px solid #262b34;border-radius:20px;padding:34px 30px;width:min(390px,92vw);text-align:center;box-shadow:0 30px 80px rgba(0,0,0,.55)}
+.rf-radar{width:112px;height:112px;margin:0 auto 16px;position:relative;display:grid;place-items:center}
+.rf-radar span{font-size:46px;z-index:2;animation:rfpulse 1.6s ease-in-out infinite}
+.rf-radar::before,.rf-radar::after{content:"";position:absolute;inset:0;border-radius:50%;border:2px solid var(--top);opacity:0;animation:rfring 2s ease-out infinite}
+.rf-radar::after{animation-delay:1s}
+@keyframes rfring{0%{transform:scale(.35);opacity:.85}100%{transform:scale(1);opacity:0}}
+@keyframes rfpulse{0%,100%{transform:scale(1)}50%{transform:scale(1.13)}}
+.rf-title{font-size:19px;font-weight:800}
+.rf-status{color:#9aa1ab;margin:6px 0 16px;min-height:20px}
+.rf-status.rf-err{color:#ff6b6b}
+.rf-steps{display:flex;justify-content:center;gap:7px;margin-bottom:16px;flex-wrap:wrap}
+.rf-steps .s{font-size:11.5px;font-weight:700;color:#6b7280;background:#1b1f27;border:1px solid #262b34;border-radius:999px;padding:5px 10px}
+.rf-steps .s.active{color:#fff;border-color:var(--top)}
+.rf-steps .s.done{color:var(--top);border-color:var(--top)}
+.rf-bar{height:6px;background:#1b1f27;border-radius:999px;overflow:hidden;position:relative}
+.rf-bar>span{position:absolute;height:100%;width:35%;background:linear-gradient(90deg,transparent,var(--top),transparent);animation:rfbar 1.4s linear infinite;border-radius:999px}
+@keyframes rfbar{0%{left:-40%}100%{left:105%}}
+.rf-wait{color:#6b7280;font-size:12px;margin-top:14px}
+.rf-close{margin-top:14px;background:none;border:0;color:#9aa1ab;font-size:13px;cursor:pointer;text-decoration:underline}
 """
 
 _TEMPLATE = r"""<!doctype html>
@@ -177,6 +208,15 @@ _TEMPLATE = r"""<!doctype html>
   <button class="modal-close" id="modalClose">&times;</button>
   <div id="modalBody"></div>
 </div></div></div>
+<div class="rf-overlay" id="rfOverlay"><div class="rf-card">
+  <div class="rf-radar"><span>🏠</span></div>
+  <div class="rf-title" id="rfTitle"></div>
+  <div class="rf-status" id="rfStatus"></div>
+  <div class="rf-steps" id="rfSteps"></div>
+  <div class="rf-bar"><span></span></div>
+  <div class="rf-wait" id="rfWait"></div>
+  <button class="rf-close" id="rfClose">close</button>
+</div></div>
 <script>
 const DATA = JSON.parse(document.getElementById('data').textContent);
 const EN = DATA.i18n.en;
@@ -266,6 +306,7 @@ function render(){
     +'<main><div class="board-intro"><h1 id="headline"></h1>'
     +'<p>'+esc(t('index_sub',{top_n:DATA.top_n}))+' <span class="stamp">· '+esc(DATA.generated)+'</span></p></div>'
     +'<div class="controls"><button id="filtersBtn">⚙ '+esc(t('filters'))+'</button>'
+    +(DATA.dispatch?'<button id="refreshBtn">🔄 '+esc(t('rf_button'))+'</button>':'')
     +'<label>'+esc(t('sort_by'))+' <select id="sortSel">'+sortOpts+'</select></label>'
     +'<span class="count" id="count"></span></div>'
     +'<div class="filters-panel" id="filtersPanel"></div>'
@@ -275,7 +316,44 @@ function render(){
   document.getElementById('sortSel').onchange=e=>{currentSort=e.target.value;localStorage.setItem('sort',currentSort);renderContent();};
   document.getElementById('filtersBtn').onclick=()=>document.getElementById('filtersPanel').classList.toggle('open');
   document.getElementById('mapToggle').onclick=e=>{e.preventDefault();mapOn=!mapOn;localStorage.setItem('mapOn',mapOn?'1':'0');render();};
+  if(DATA.dispatch){ const rb=document.getElementById('refreshBtn'); if(rb) rb.onclick=doRefresh; }
   renderContent();
+}
+
+// ---- manual refresh (trigger the GitHub Action) ----
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+function rfEl(id){ return document.getElementById(id); }
+function rfSteps(active){ const steps=[['q','rf_step_q'],['f','rf_step_f'],['r','rf_step_r'],['p','rf_step_p']];
+  rfEl('rfSteps').innerHTML=steps.map((s,i)=>'<span class="s '+(i<active?'done':(i===active?'active':''))+'">'+(i<active?'✓ ':'')+esc(t(s[1]))+'</span>').join(''); }
+async function ghApi(path,opts){ return fetch('https://api.github.com'+path,{...(opts||{}),
+  headers:{'Authorization':'Bearer '+DATA.dispatch.token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'}}); }
+let rfBusy=false, rfCancelled=false;
+async function doRefresh(){
+  if(rfBusy) return; rfBusy=true; rfCancelled=false;
+  const D=DATA.dispatch;
+  rfEl('rfOverlay').classList.add('open'); rfEl('rfTitle').textContent=t('rf_title'); rfEl('rfWait').textContent=t('rf_wait');
+  const st=rfEl('rfStatus'); st.classList.remove('rf-err'); const t0=Date.now(); rfSteps(0); st.textContent=t('rf_queued');
+  const stop=()=>{ rfBusy=false; };
+  try{
+    const disp=await ghApi('/repos/'+D.repo+'/actions/workflows/'+D.workflow+'/dispatches',{method:'POST',body:JSON.stringify({ref:D.ref})});
+    if(disp.status!==204){ await disp.text(); throw new Error([401,403,404].includes(disp.status)?'token not authorized for this repo':('GitHub error '+disp.status)); }
+    let runId=null;
+    for(let i=0;i<24&&runId===null;i++){ await sleep(3000); if(rfCancelled) return stop();
+      const j=await (await ghApi('/repos/'+D.repo+'/actions/workflows/'+D.workflow+'/runs?event=workflow_dispatch&per_page=5')).json();
+      const c=(j.workflow_runs||[]).find(w=>new Date(w.created_at).getTime()>=t0-20000); if(c) runId=c.id; }
+    if(runId===null) throw new Error('run not found');
+    let done=false;
+    for(let i=0;i<95&&!done;i++){ await sleep(4000); if(rfCancelled) return stop();
+      const run=await (await ghApi('/repos/'+D.repo+'/actions/runs/'+runId)).json();
+      if(run.status==='queued'){ rfSteps(0); st.textContent=t('rf_queued'); }
+      else if(run.status==='in_progress'){ const s=((Date.now()-t0)/1000)<50?1:2; rfSteps(s); st.textContent=t(s===1?'rf_fetching':'rf_ranking'); }
+      else if(run.status==='completed'){ done=true; if(run.conclusion!=='success') throw new Error('run '+run.conclusion); }
+    }
+    if(!done) throw new Error('timed out');
+    rfSteps(3); st.textContent=t('rf_publishing'); await sleep(25000); if(rfCancelled) return stop();
+    rfSteps(4); st.textContent=t('rf_done'); await sleep(1200); if(rfCancelled) return stop();
+    location.reload();
+  }catch(e){ st.classList.add('rf-err'); st.textContent=t('rf_error',{e:(e&&e.message)||e}); rfBusy=false; }
 }
 function buildFiltersPanel(){
   const p=document.getElementById('filtersPanel');
@@ -359,6 +437,7 @@ function L2map(L){ const m=window.L.map('dmap').setView([L.lat,L.lon],14);
 function closeModal(){ document.getElementById('modalBack').classList.remove('open'); if(window._dm){window._dm.remove();window._dm=null;} }
 document.getElementById('modalClose').onclick=closeModal;
 document.getElementById('modalBack').onclick=e=>{ if(e.target.id==='modalBack') closeModal(); };
+document.getElementById('rfClose').onclick=()=>{ rfCancelled=true; rfBusy=false; document.getElementById('rfOverlay').classList.remove('open'); };
 render();
 </script>
 </body>

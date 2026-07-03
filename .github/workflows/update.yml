@@ -47,6 +47,11 @@ jobs:
           DIGITRANSIT_KEY: ${{ secrets.DIGITRANSIT_KEY }}
           SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
           PUBLISH_SITE: "1"
+          # Optional: enables the on-page "Refresh now" button (fine-grained PAT,
+          # Actions:write on THIS repo only). Leave the secret unset to hide it.
+          GH_DISPATCH_TOKEN: ${{ secrets.GH_DISPATCH_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          GH_WORKFLOW: update.yml
         run: python -m collector.run --once
 
       - uses: actions/upload-pages-artifact@v3

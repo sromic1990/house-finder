@@ -146,4 +146,5 @@ notify:
 # Web UI -------------------------------------------------------------------
 web:
   title: "Helsinki House Leaderboard"
+  public_url: "https://sromic1990.github.io/house-finder/"   # used for the email button
   show_excluded: false        # add a tab listing rejected properties + reasons

@@ -107,7 +107,7 @@ def collect_once(config: dict, store: Store) -> dict:
 
     # notify on new top-N entrants (compare to previous snapshot)
     prev = store.previous_ranks()
-    board_url = config.get("web", {}).get("public_url", "http://localhost:8000")
+    board_url = os.getenv("PUBLIC_URL") or config.get("web", {}).get("public_url", "http://localhost:8000")
     fired = notify_new_top_entries(prev, ranked, config=config, board_url=board_url)
     if fired:
         log.info("notified: %d new top-%s entr%s",
