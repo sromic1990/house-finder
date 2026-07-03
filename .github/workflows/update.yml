@@ -1,0 +1,64 @@
+name: Update leaderboard
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"      # every 6 hours (UTC)
+  workflow_dispatch: {}         # manual "Run workflow" button
+
+# Let the deploy job publish to Pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never run two updates at once.
+concurrency:
+  group: house-finder
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # Persist the SQLite DB between runs so NEW/delisted tracking and the
+      # top-5 email de-dup survive (a fresh unique key each run, restored from
+      # the most recent one via the prefix).
+      - name: Restore listing history
+        uses: actions/cache@v4
+        with:
+          path: db/house_finder.sqlite3
+          key: hfdb-${{ github.run_id }}
+          restore-keys: hfdb-
+
+      - name: Collect, notify, and render the encrypted site
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTIFY_TO: ${{ secrets.NOTIFY_TO }}
+          DIGITRANSIT_KEY: ${{ secrets.DIGITRANSIT_KEY }}
+          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+          PUBLISH_SITE: "1"
+        run: python -m collector.run --once
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,149 @@
+# =========================================================================
+#  house-finder configuration
+#  Edit this file to change WHAT gets collected and HOW it's ranked.
+#  Nothing here requires touching code. Restart the app to apply changes.
+# =========================================================================
+
+# What to collect ----------------------------------------------------------
+search:
+  deal_type: sale            # sale | rent
+  city: Helsinki
+  # Optional coarse pre-filters applied at the source when supported.
+  # These reduce how much we fetch; fine ranking still happens via `criteria`.
+  price_max: 400000
+  size_min_m2: 100
+  rooms_min: 4
+  # Public-transport travel-time enrichment (needs DIGITRANSIT_KEY env var).
+  # When true, the collector routes each listing to city center + airport and
+  # stores the minutes so the `travel_time` criterion can filter on them.
+  enrich_transit: true
+
+sources:
+  # Live scrapers (working). Flip mock on for offline/demo use.
+  mock:     { enabled: false }
+  etuovi:   { enabled: true, max_pages: 40 }   # per house type; adapter stops at the real last page
+  oikotie:  { enabled: true, building_types: [2, 4, 32, 64] }  # rivi/pari/omakoti/erillistalo
+
+# How often to refresh listings (detect new / delisted) --------------------
+schedule:
+  interval_hours: 6
+
+# Ranking + requirements ---------------------------------------------------
+# Each block name maps to a registered Criterion `key`. To add a new one:
+#   1. write a Criterion subclass with a unique key (see core/criteria/builtins.py)
+#   2. add a block here with its settings
+criteria:
+
+  # --- HARD REQUIREMENTS (a listing failing these is dropped) -------------
+  sauna:
+    require_private: true
+    on_unknown: keep         # keep|exclude when the source doesn't say
+
+  balcony_glazed:
+    on_unknown_glazing: keep # keep|exclude when glazing isn't stated
+
+  budget:
+    max_price: 400000        # hard ceiling — over this is excluded
+    on_unknown: keep
+
+  min_size:
+    min_m2: 100              # hard floor — smaller is excluded
+    on_unknown: keep
+
+  ownership_sanity:          # drop asumisoikeus / osaomistus (not full purchase)
+    min_price_per_m2: 1500   # no real Helsinki house sells below this €/m²
+    on_unknown: keep
+
+  property_type:             # only houses, not apartment blocks
+    allowed: [omakotitalo, rivitalo, paritalo, erillistalo]
+    on_unknown: keep
+
+  bedrooms:                  # bedrooms excl. living room (derives rooms-1)
+    min: 3
+    max: 5
+    on_unknown: keep
+
+  duplex:                    # two-floor / maisonette home
+    required: true
+    on_unknown: keep
+
+  toilets:                   # at least two toilets
+    min: 2
+    on_unknown: keep
+
+  parking_min:               # deal-breaker is ONLY an open spot with a heating pole
+    allowed: [garage, hall, covered, own_spot, open]   # roofed / dedicated / plain spot ok
+    on_unknown: keep         # excludes only confirmed open_pole / none
+
+
+  built_after:               # newer than 1975
+    year: 1975
+    on_unknown: keep
+
+  station_distance:          # within 1 km of a metro / train station
+    max_km: 1.0
+    on_unknown: keep
+
+  # --- RANKING PREFERENCES (weights are relative; tune freely) ------------
+  # Parking is important and transit is really preferred -> higher weights.
+  # Price / size / rooms are equal baseline.
+  parking:
+    weight: 4
+    scores:
+      garage: 1.0
+      hall: 0.9
+      covered: 0.7
+      own_spot: 0.55        # dedicated own spot (oma autopaikka) — a positive
+      open_pole: 0.4
+      open: 0.15
+      none: 0.0
+
+  transit:                   # closeness to a metro / commuter-train station
+    weight: 4
+    near_km: 0.6             # <=600 m from a station -> full marks
+    far_km: 2.5             # >=2.5 km -> 0
+    # stations: []          # optional; defaults to Helsinki metro + rail list
+
+  travel_time:               # PREFERENCE: shorter transit to center/airport (needs DIGITRANSIT_KEY)
+    weight: 3
+    good_minutes: 30         # <=30 min -> full marks
+    bad_minutes: 60          # >=60 min -> 0
+    destinations: [center, airport]
+
+  own_land:                  # PRIORITY TIER: own-plot houses rank above leased ones
+    priority: true           # all own-land above all leased, regardless of score
+    scores:
+      own: 1.0
+      optional_rental: 0.4
+      rented: 0.0
+    # (to hard-exclude leased plots instead, remove this and add a filter — see git history)
+
+  price:
+    weight: 2
+    ideal_price: 300000
+    max_budget: 400000
+
+  size:
+    weight: 2
+    min_m2: 100
+    target_m2: 130
+
+  rooms:
+    weight: 2
+    min_rooms: 4
+    target_rooms: 6
+
+  # price_per_m2 available too (add a block with weight/good/bad to enable)
+
+# Notifications ------------------------------------------------------------
+notify:
+  email:
+    enabled: true
+    to: ""                    # set NOTIFY_TO in .env / Actions secret (keeps it out of a public repo)
+    on: top5_new_entry        # notify when a listing rises into the top 5
+    top_n: 5
+
+# Web UI -------------------------------------------------------------------
+web:
+  title: "Helsinki House Leaderboard"
+  show_excluded: false        # add a tab listing rejected properties + reasons
