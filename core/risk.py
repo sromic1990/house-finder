@@ -19,7 +19,24 @@ Each returns {"score": 0..1, "level": "low|medium|high", "reasons": [str, ...]}.
 """
 from __future__ import annotations
 
+import re
+
 DETACHED = ("omakotitalo", "erillistalo")
+
+# --- renovation-text matchers -------------------------------------------------
+_RENEW = r"(?:uusit\w*|uusim\w*|uusinta\w*|saneera\w*|peruskorja\w*|remontoit\w*)"
+_PIPE = r"(?:putki\w*|putkist\w*|viemär\w*|käyttövesi\w*|linjast\w*)"
+# A COMPLETED pipe renovation: the compound word, or a pipe noun paired with a
+# *renewal* verb. A plain repair ("viemärin kaadon korjaus") must NOT qualify.
+_PLUMB_DONE = re.compile(
+    r"putkiremon\w*|linjasaneera\w*|" + _PIPE + r"\s+" + _RENEW
+    + r"|" + _RENEW + r"\s+" + _PIPE, re.I)
+# Planned pipe work — any mention in the upcoming list is a strong signal.
+_PLUMB_PLAN = re.compile(r"putkiremon\w*|linjasaneera\w*|(?:putki|viemär|käyttövesi)\w*", re.I)
+_MAJOR_PLAN = re.compile(r"julkisivu\w*|vesikat\w*|(?:^| )katto\w*|ikkun\w*|salaoj\w*|parveke\w*", re.I)
+# A history of water / moisture / mould / rot damage — a red flag, not reassurance.
+_WATER = re.compile(r"vesivahin\w*|kosteusvaur\w*|kosteusvahin\w*|homevaur\w*|"
+                    r"salaojavesivah\w*|lahovaur\w*", re.I)
 
 
 def _level(score: float, med: float, hi: float) -> str:
@@ -30,27 +47,52 @@ def renovation_risk(listing, year_now: int) -> dict:
     y = listing.year_built
     detached = listing.property_type in DETACHED
     energy = (listing.features.get("energy_class") or "").upper()
-    reasons = []
+    planned = (listing.features.get("reno_planned") or "").lower()
+    done = (listing.features.get("reno_done") or "").lower()
+    reasons: list[str] = []
+
+    # 1. Age baseline.
     if y:
-        age = year_now - y
-        if age >= 45:
-            base = 0.85
-            reasons.append(f"Built {y} (~{age} yr) — deep in the plumbing/roof/facade renovation window")
-        elif age >= 38:
-            base = 0.7
-            reasons.append(f"Built {y} (~{age} yr) — entering the major-renovation (putkiremontti) age")
-        elif age >= 28:
-            base = 0.5
-            reasons.append(f"Built {y} (~{age} yr) — some major renovations may fall within a few years")
-        elif age >= 18:
-            base = 0.3
-            reasons.append(f"Built {y} (~{age} yr) — mostly minor upkeep expected near-term")
-        else:
-            base = 0.12
-            reasons.append(f"Built {y} (~{age} yr) — newer building, low near-term renovation need")
+        age = max(0, year_now - y)   # guard against a future/typo build year
+        for thr, val, msg in (
+                (45, 0.85, "deep in the plumbing/roof/facade renovation window"),
+                (38, 0.70, "entering the major-renovation (putkiremontti) age"),
+                (28, 0.50, "some major renovations may fall within a few years"),
+                (18, 0.30, "mostly minor upkeep expected near-term"),
+                (0, 0.12, "newer building, low near-term renovation need")):
+            if age >= thr:
+                base, age_msg = val, f"Built {y} (~{age} yr) — {msg}"
+                break
     else:
-        base = 0.45
-        reasons.append("Build year not stated — condition/renovation timing unclear")
+        base, age_msg = 0.45, "Build year not stated — condition/renovation timing unclear"
+
+    # 2. The taloyhtiö's ACTUAL listed renovations override the age guess. A
+    #    genuinely completed putkiremontti is the biggest de-risker for an
+    #    apartment; for a detached house the pipes are only one owner-borne
+    #    system (roof, facade, foundation remain), so it de-risks far less.
+    if _PLUMB_PLAN.search(planned):
+        base = max(base, 0.85)
+        reasons.append("Major plumbing (putkiremontti) is in the taloyhtiö's upcoming plan")
+    elif _MAJOR_PLAN.search(planned):
+        base = max(base, 0.62)
+        reasons.append("A major renovation (facade/roof/windows) is in the upcoming plan")
+    elif _PLUMB_DONE.search(done) and not detached:
+        base = min(base, 0.30)
+        reasons.append("Major plumbing (putkiremontti) already done — that big-ticket item is behind you")
+    elif _PLUMB_DONE.search(done) and detached:
+        base = min(base, 0.50)
+        reasons.append("Pipes already renewed — but the roof, facade and rest still fall on the owner alone")
+    else:
+        reasons.append(age_msg)
+
+    # 3. A history of water / moisture damage is a red flag — raise, don't lower.
+    water_hits = len(_WATER.findall(done)) + len(_WATER.findall(planned))
+    if water_hits:
+        base = min(1.0, base + (0.12 if water_hits == 1 else 0.24))
+        reasons.insert(0, "Listing notes " + ("a past" if water_hits == 1 else "repeated")
+                       + " water/moisture damage — inspect the condition report carefully")
+
+    # 4. Structural modifiers.
     if detached:
         base = min(1.0, base + 0.1)
         reasons.append("Detached house — renovation costs fall entirely on the owner, as a lump sum")
@@ -58,20 +100,6 @@ def renovation_risk(listing, year_now: int) -> dict:
         base = min(1.0, base + 0.1)
         reasons.append(f"Energy class {energy} — possible energy-efficiency upgrades")
 
-    # Use the taloyhtiö's ACTUAL listed renovations when we have them.
-    planned = (listing.features.get("reno_planned") or "").lower()
-    done = (listing.features.get("reno_done") or "").lower()
-    _plumbing = ("putki", "linjasan", "viemär", "käyttövesi")
-    _major = _plumbing + ("julkisivu", "vesikat", " katto", "ikkun", "salaoja", "parveke")
-    if any(w in planned for w in _plumbing):
-        base = max(base, 0.85)
-        reasons.insert(0, "Major plumbing (putkiremontti) is in the taloyhtiö's upcoming plan")
-    elif any(w in planned for w in _major):
-        base = max(base, 0.62)
-        reasons.insert(0, "A major renovation (facade/roof/windows) is in the upcoming plan")
-    if any(w in done for w in _plumbing):
-        base = min(base, 0.35)
-        reasons.insert(0, "Major plumbing already done — that big-ticket renovation is behind you")
     return {"score": round(base, 2), "level": _level(base, 0.4, 0.66), "reasons": reasons}
 
 
