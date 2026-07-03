@@ -30,6 +30,10 @@ BASE = Path(__file__).parent
 _PARK_RANK = {"garage": 6, "hall": 5, "covered": 4, "own_spot": 3,
               "open_pole": 2, "open": 1, "none": 0}
 
+# how strongly low risk pulls "Best match" up (relative to the other scorer weights)
+RENO_WEIGHT = 3
+BANK_WEIGHT = 2
+
 
 def _station_km(L):
     if L.lat is None or L.lon is None:
@@ -66,6 +70,11 @@ def _candidate_payload(L, filters, scorers, prev, year_now, medians, overall) ->
                 contribs.append({"key": s.key, "label": c.label,
                                  "raw": round(c.raw, 3), "weight": c.weight,
                                  "prio": bool(getattr(s, "is_priority", False))})
+    # fold the two risk flags into the weighted score (safer = higher raw)
+    contribs.append({"key": "reno_safety", "label": f"renovation risk: {reno['level']}",
+                     "raw": round(1 - reno["score"], 3), "weight": RENO_WEIGHT, "prio": False})
+    contribs.append({"key": "bank_safety", "label": f"bank risk: {bank['level']}",
+                     "raw": round(1 - bank["score"], 3), "weight": BANK_WEIGHT, "prio": False})
     return {
         "id": L.uid, "source": L.source, "url": L.url, "title": L.title,
         "price": L.price, "ppm2": L.price_per_m2, "size": L.size_m2,
@@ -109,7 +118,11 @@ def build_site(config: dict, store, generated: str) -> str:
         "listings": listings,
         "criteria": ([{"key": c.key, "title": c.title, "kind": "filter"} for c in filters]
                      + [{"key": c.key, "title": c.title, "kind": "score",
-                         "weight": c.weight, "priority": c.is_priority} for c in scorers]),
+                         "weight": c.weight, "priority": c.is_priority} for c in scorers]
+                     + [{"key": "reno_safety", "title": "Low renovation risk (5y)",
+                         "kind": "score", "weight": RENO_WEIGHT, "priority": False},
+                        {"key": "bank_safety", "title": "Low bank risk",
+                         "kind": "score", "weight": BANK_WEIGHT, "priority": False}]),
         # Manual-refresh button config — embedded ONLY when both a dispatch token
         # and a site passphrase are present (i.e. the output will be encrypted),
         # so the token never lands in a plaintext page.
