@@ -89,6 +89,8 @@ class Listing:
     first_seen: Optional[str] = None   # ISO timestamp
     last_seen: Optional[str] = None    # ISO timestamp
     delisted: bool = False
+    prev_price: Optional[float] = None       # price just before the most recent drop
+    price_dropped_at: Optional[str] = None   # when we detected that drop (ISO)
 
     # ---- Derived helpers --------------------------------------------------
     @property

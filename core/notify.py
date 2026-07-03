@@ -114,6 +114,59 @@ def render_email(entries, board_url: str, top_n: int) -> str:
 </div>"""
 
 
+def render_price_drops(entries, board_url: str) -> str:
+    rows = []
+    for r in entries:
+        L = r.listing
+        drop = (L.prev_price - L.price) if (L.prev_price and L.price) else 0
+        pct = (drop / L.prev_price * 100) if L.prev_price else 0
+        photo = L.photos[0] if L.photos else ""
+        img = (f'<img src="{photo}" width="150" style="border-radius:8px;'
+               f'object-fit:cover" alt="">') if photo else ""
+        facts = " · ".join(x for x in [
+            f"{L.size_m2:g} m²" if L.size_m2 else "",
+            f"{L.rooms:g} r" if L.rooms else "", L.district or L.city] if x)
+        rows.append(f"""
+        <tr><td style="padding:12px 0;border-bottom:1px solid #eee"><table><tr>
+          <td valign="top">{img}</td>
+          <td valign="top" style="padding-left:14px">
+            <div style="font-size:13px;color:#e03131;font-weight:700">▼ €{drop:,.0f} ({pct:.0f}%) · now #{r.rank}</div>
+            <div style="font-size:17px;font-weight:600;margin:2px 0">
+              <a href="{L.url}" style="color:#1a1a1a;text-decoration:none">{L.title}</a></div>
+            <div style="color:#555"><s>€{L.prev_price:,.0f}</s> → <b>€{L.price:,.0f}</b> · {facts}</div>
+          </td></tr></table></td></tr>""")
+    plural = "s" if len(entries) > 1 else ""
+    return f"""\
+<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:620px;margin:auto">
+  <h2 style="margin:0 0 4px">📉 Price drop{plural} on your board</h2>
+  <p style="color:#666;margin:0 0 12px">{len(entries)} listing{plural} you qualify for just got cheaper.</p>
+  <table width="100%">{''.join(rows)}</table>
+  <p style="margin-top:18px"><a href="{board_url}" style="background:#111;color:#fff;
+     padding:10px 18px;border-radius:8px;text-decoration:none">Open the leaderboard →</a></p>
+</div>"""
+
+
+def notify_price_drops(dropped_ranked, *, config, mailer=None,
+                       board_url="http://localhost:8000") -> list:
+    """Email the qualifying (ranked) listings whose price fell this run."""
+    ecfg = (config.get("notify", {}) or {}).get("email", {}) or {}
+    if not ecfg.get("enabled", False) or not dropped_ranked:
+        return []
+    to = os.getenv("NOTIFY_TO") or ecfg.get("to")
+    if not to:
+        return []
+    mailer = mailer or default_mailer()
+    n = len(dropped_ranked)
+    subject = (f"📉 Price drop: {dropped_ranked[0].listing.title}" if n == 1
+               else f"📉 {n} price drops on your board")
+    try:
+        mailer.send(subject, render_price_drops(dropped_ranked, board_url), to)
+    except Exception as exc:
+        import logging
+        logging.getLogger("notify").error("price-drop email failed (continuing): %s", exc)
+    return dropped_ranked
+
+
 def notify_new_top_entries(previous_ranks, ranked, *, config, mailer=None,
                            board_url="http://localhost:8000") -> list:
     """Detect + send. Returns the entries that triggered a notification."""

@@ -27,7 +27,7 @@ except ImportError:
 
 from core.config import load_config
 from core.criteria import build_criteria
-from core.notify import notify_new_top_entries
+from core.notify import notify_new_top_entries, notify_price_drops
 from core.routing import transit_minutes
 from core.scoring import rank_listings
 from db import Store
@@ -118,6 +118,13 @@ def collect_once(config: dict, store: Store) -> dict:
         log.info("notified: %d new top-%s entr%s",
                  len(fired), config["notify"]["email"].get("top_n", 5),
                  "y" if len(fired) == 1 else "ies")
+
+    # price-drop alerts for qualifying (ranked) listings cut this run
+    dropped_uids = {u for u, _, _ in changes.get("dropped", [])}
+    board_dropped = [r for r in ranked if r.listing.uid in dropped_uids]
+    if board_dropped:
+        notify_price_drops(board_dropped, config=config, board_url=board_url)
+        log.info("price-drop email: %d board listing(s) cut this run", len(board_dropped))
 
     # Render the static site BEFORE saving this run's snapshot, so the site's
     # NEW badges compare against the PREVIOUS run (like the email does).

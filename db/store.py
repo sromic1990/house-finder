@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS listings (
     last_seen    TEXT,
     delisted     INTEGER DEFAULT 0,
     delisted_at  TEXT,
+    prev_price   REAL,                  -- price just before the most recent drop
+    price_dropped_at TEXT,              -- when that drop was detected
     data         TEXT NOT NULL          -- full Listing as JSON
 );
 
@@ -61,6 +63,11 @@ class Store:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as c:
             c.executescript(SCHEMA)
+            for col in ("prev_price REAL", "price_dropped_at TEXT"):   # migrate old DBs
+                try:
+                    c.execute(f"ALTER TABLE listings ADD COLUMN {col}")
+                except sqlite3.OperationalError:
+                    pass
 
     @contextmanager
     def _conn(self):
@@ -74,14 +81,19 @@ class Store:
 
     # ---- listing upsert / history ------------------------------------
     def upsert_listings(self, listings: Iterable[Listing]) -> dict:
-        """Insert/update listings from one run. Returns {new, updated}."""
+        """Insert/update listings from one run. Detects price drops.
+
+        Returns {new, updated, dropped} where dropped = [(uid, old_price, new_price)]
+        for listings whose price fell this run.
+        """
         now = _now()
-        new_uids, updated_uids = [], []
+        new_uids, updated_uids, dropped = [], [], []
         with self._conn() as c:
             for lst in listings:
                 lst.last_seen = now
                 row = c.execute(
-                    "SELECT first_seen FROM listings WHERE uid=?", (lst.uid,)
+                    "SELECT first_seen, price, prev_price, price_dropped_at "
+                    "FROM listings WHERE uid=?", (lst.uid,)
                 ).fetchone()
                 if row is None:
                     lst.first_seen = now
@@ -90,21 +102,33 @@ class Store:
                 else:
                     lst.first_seen = row["first_seen"]
                     updated_uids.append(lst.uid)
+                    # carry forward any earlier drop record, then check for a new drop
+                    lst.prev_price = row["prev_price"]
+                    lst.price_dropped_at = row["price_dropped_at"]
+                    old = row["price"]
+                    if lst.price is not None and old is not None and lst.price < old - 1:
+                        lst.prev_price = old
+                        lst.price_dropped_at = now
+                        dropped.append((lst.uid, old, lst.price))
                 c.execute(
                     """INSERT INTO listings
                        (uid, source, source_id, url, title, price, size_m2, rooms,
-                        first_seen, last_seen, delisted, delisted_at, data)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,0,NULL,?)
+                        first_seen, last_seen, delisted, delisted_at,
+                        prev_price, price_dropped_at, data)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,0,NULL,?,?,?)
                        ON CONFLICT(uid) DO UPDATE SET
                         url=excluded.url, title=excluded.title, price=excluded.price,
                         size_m2=excluded.size_m2, rooms=excluded.rooms,
                         last_seen=excluded.last_seen, delisted=0, delisted_at=NULL,
+                        prev_price=excluded.prev_price,
+                        price_dropped_at=excluded.price_dropped_at,
                         data=excluded.data""",
                     (lst.uid, lst.source, lst.source_id, lst.url, lst.title,
                      lst.price, lst.size_m2, lst.rooms, lst.first_seen,
-                     lst.last_seen, json.dumps(lst.to_dict(), ensure_ascii=False)),
+                     lst.last_seen, lst.prev_price, lst.price_dropped_at,
+                     json.dumps(lst.to_dict(), ensure_ascii=False)),
                 )
-        return {"new": new_uids, "updated": updated_uids}
+        return {"new": new_uids, "updated": updated_uids, "dropped": dropped}
 
     def mark_delisted(self, seen_uids: set[str], sources: set[str]) -> list[str]:
         """Any active listing from `sources` NOT in `seen_uids` is now delisted."""

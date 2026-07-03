@@ -88,6 +88,7 @@ def _candidate_payload(L, filters, scorers, prev, year_now, medians, overall) ->
         "station_km": _station_km(L),
         "parking_rank": _PARK_RANK.get((L.features.get("parking") or {}).get("type")),
         "new": L.uid not in prev,
+        "prev_price": L.prev_price, "dropped_at": L.price_dropped_at,
         "pass": passes, "contribs": contribs,
         "reno_risk": reno, "bank_risk": bank,
     }
@@ -205,6 +206,8 @@ _EXTRA_CSS = """
 .modal-inner{padding:20px 22px 30px}
 .modal-close{position:sticky;top:0;float:right;background:#fff;border:1px solid var(--line);width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:18px}
 .excluded-hint{color:var(--muted);font-size:13px;margin:8px 0 0}
+.drop-badge{position:absolute;bottom:10px;left:10px;background:#e03131;color:#fff;font-weight:800;font-size:11px;padding:3px 8px;border-radius:6px}
+.drop-was{color:#e03131;font-weight:700;font-size:12.5px}
 .risks{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .risk{font-size:11.5px;font-weight:700;padding:3px 8px;border-radius:7px;border:1px solid}
 .risk-box{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:24px}
@@ -283,6 +286,11 @@ const PARK = {garage:'garage',hall:'parking hall',covered:'carport',own_spot:'ow
 const RISKCOL={low:'#0f9d58',medium:'#e8892b',high:'#e03131'};
 function riskPill(labelKey, r){ if(!r) return ''; const c=RISKCOL[r.level]||'#888';
   return '<span class="risk" style="color:'+c+';border-color:'+c+'55;background:'+c+'14" title="'+esc((r.reasons||[]).join(' · '))+'">'+esc(t(labelKey))+': '+esc(t('risk_'+r.level))+'</span>'; }
+function dropInfo(L){
+  if(!L.prev_price||!L.price||L.prev_price<=L.price||!L.dropped_at) return null;
+  if((Date.now()-Date.parse(L.dropped_at))/86400000 > 21) return null;   // only recent drops
+  return {amt:L.prev_price-L.price, prev:L.prev_price, pct:Math.round((L.prev_price-L.price)/L.prev_price*100)};
+}
 
 // ---- state ----
 let mapOn = localStorage.getItem('mapOn')==='1';
@@ -356,14 +364,14 @@ function facts(L){
   return '<table>'+rows.join('')+'</table>';
 }
 function card(r){
-  const L=r.L, top=r.rank<=DATA.top_n;
+  const L=r.L, top=r.rank<=DATA.top_n, d=dropInfo(L);
   const img=L.photos&&L.photos[0]?'<img loading="lazy" src="'+esc(L.photos[0])+'" alt="">':'<div class="noimg">—</div>';
   const chips=L.contribs.filter(c=>enabled.has(c.key)).map(c=>'<span class="chip">'+esc(c.label)+'</span>').join('');
   const fa=[L.size!=null?L.size+' m²':'', L.rooms!=null?L.rooms+' '+t('unit_rooms'):'', L.year||'', L.district||L.city].filter(Boolean).map(x=>'<span>'+esc(x)+'</span>').join('');
   return '<article class="card '+(top?'card-top':'')+'" data-id="'+esc(L.id)+'">'
-    +'<div class="card-media">'+img+'<span class="rank-badge">#'+r.rank+'</span><span class="score-badge">'+r.score+'</span>'+(L.new?'<span class="new-badge">'+esc(t('badge_new'))+'</span>':'')+'</div>'
+    +'<div class="card-media">'+img+'<span class="rank-badge">#'+r.rank+'</span><span class="score-badge">'+r.score+'</span>'+(L.new?'<span class="new-badge">'+esc(t('badge_new'))+'</span>':'')+(d?'<span class="drop-badge">▼ '+euroK(d.amt)+'</span>':'')+'</div>'
     +'<div class="card-body"><div class="card-title">'+esc(L.title)+'</div>'
-    +'<div class="card-price">'+euro(L.price)+(L.ppm2?' <span class="ppm2">· '+euro(L.ppm2)+'/m²</span>':'')+'</div>'
+    +'<div class="card-price">'+euro(L.price)+(d?' <span class="drop-was">↓ '+euro(d.amt)+' · '+esc(t('was'))+' '+euro(d.prev)+'</span>':'')+(L.ppm2?' <span class="ppm2">· '+euro(L.ppm2)+'/m²</span>':'')+'</div>'
     +'<div class="card-facts">'+fa+'</div><div class="card-chips">'+chips+'</div>'
     +'<div class="risks">'+riskPill('bank_label',L.bank_risk)+riskPill('reno_label',L.reno_risk)+'</div>'
     +'<a class="src-link-card" href="'+esc(L.url)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+esc(t('view_on',{source:L.source}))+'</a></div></article>';
@@ -508,14 +516,14 @@ function updateMapList(){
 
 // ---- modal ----
 function openModal(id){
-  const L=DATA.listings.find(x=>x.id===id); if(!L) return; const s=scoreOf(L);
+  const L=DATA.listings.find(x=>x.id===id); if(!L) return; const s=scoreOf(L), d=dropInfo(L);
   const gallery=(L.photos||[]).map(p=>'<img loading="lazy" src="'+esc(p)+'">').join('');
   const bars=L.contribs.map(c=>'<li><span class="score-label">'+esc(c.label)+'</span><span class="score-bar"><span style="width:'+Math.round(c.raw*100)+'%"></span></span><span class="score-w">×'+c.weight+'</span></li>').join('');
   const plans=(L.floor_plans||[]).map(p=>'<img loading="lazy" src="'+esc(p)+'">').join('');
   document.getElementById('modalBody').innerHTML=
     '<div class="detail-rank">'+esc(t('rank_score',{rank:'—',score:s.score}))+'</div>'
     +'<h1>'+esc(L.title)+'</h1><div class="detail-addr">'+esc([L.address,L.district,L.city].filter(Boolean).join(', '))+'</div>'
-    +'<div class="detail-price">'+euro(L.price)+(L.ppm2?' <span class="ppm2">'+euro(L.ppm2)+'/m²</span>':'')+'</div>'
+    +'<div class="detail-price">'+euro(L.price)+(d?' <span class="drop-was">↓ '+euro(d.amt)+' · '+esc(t('was'))+' '+euro(d.prev)+'</span>':'')+(L.ppm2?' <span class="ppm2">'+euro(L.ppm2)+'/m²</span>':'')+'</div>'
     +'<a class="src-link" href="'+esc(L.url)+'" target="_blank" rel="noopener">'+esc(t('view_on',{source:L.source}))+'</a>'
     +(gallery?'<div class="gallery" style="margin-top:16px">'+gallery+'</div>':'')
     +'<div class="detail-cols"><section class="facts-box"><h2>'+esc(t('key_facts'))+'</h2>'+facts(L)+'</section>'
