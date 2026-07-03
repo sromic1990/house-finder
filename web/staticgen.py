@@ -220,6 +220,7 @@ _EXTRA_CSS = """
 .cost-box table{width:100%;border-collapse:collapse;margin-bottom:8px}
 .cost-box th{text-align:left;color:var(--muted);font-weight:500;padding:5px 0}
 .cost-box td{text-align:right;padding:5px 0;font-weight:600}
+.cost-box tr.cost-info th,.cost-box tr.cost-info td{color:var(--muted);font-weight:500;border-top:1px dashed var(--line);padding-top:7px}
 .reno-list{font-size:13px;color:#444;margin:6px 0;line-height:1.45}
 .drop-badge{position:absolute;bottom:10px;left:10px;background:#e03131;color:#fff;font-weight:800;font-size:11px;padding:3px 8px;border-radius:6px}
 .drop-was{color:#e03131;font-weight:700;font-size:12.5px}
@@ -410,16 +411,17 @@ function riskSection(L){
 }
 function costSection(L){
   if(!L.cost) return '';
-  const b=L.cost.breakdown, a=L.cost.assumptions;
-  const row=(k,v)=>'<tr><th>'+esc(t(k))+'</th><td>'+euro(v)+' / '+esc(t('per_month'))+'</td></tr>';
+  const c=L.cost, b=c.breakdown;
+  const row=(k,v,cls)=>'<tr'+(cls?' class="'+cls+'"':'')+'><th>'+esc(t(k))+'</th><td>'+euro(v)+' / '+esc(t('per_month'))+'</td></tr>';
   let reno='';
   if(L.reno_planned) reno+='<div class="reno-list"><b>'+esc(t('reno_planned_label'))+':</b> '+esc(L.reno_planned)+'</div>';
   if(L.reno_done) reno+='<div class="reno-list"><b>'+esc(t('reno_done_label'))+':</b> '+esc(L.reno_done)+'</div>';
+  const fin = c.financing_fee ? row('cost_financing', c.financing_fee, 'cost-info') : '';
   return '<section class="cost-box"><h2>'+esc(t('cost_heading'))+'</h2>'
-    +'<div class="cost-big">≈ '+euro(L.cost.monthly)+' / '+esc(t('per_month'))+'</div>'
-    +'<table>'+row('cost_mortgage',b.mortgage)+row('cost_charges',b.charges)+row('cost_renovation',b.renovation)+'</table>'
+    +'<div class="cost-big">≈ '+euro(c.monthly)+' / '+esc(t('per_month'))+'</div>'
+    +'<table>'+row('cost_charges',b.charges)+row('cost_renovation',b.renovation)+fin+'</table>'
     +reno
-    +'<div class="risk-disc">'+esc(t('cost_assump',{down:Math.round(a.down_pct*100),rate:(a.rate*100).toFixed(1),years:a.years}))+(L.cost.charges_estimated?' '+esc(t('cost_charges_est')):'')+'</div></section>';
+    +'<div class="risk-disc">'+esc(t('cost_note'))+(c.charges_estimated?' '+esc(t('cost_charges_est')):'')+'</div></section>';
 }
 
 // ---- render shell ----
