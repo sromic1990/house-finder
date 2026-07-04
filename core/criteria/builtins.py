@@ -147,6 +147,32 @@ class OwnershipSanity(FilterCriterion):
 
 
 @register
+class ResidentialCompleteness(FilterCriterion):
+    """Drop entries that aren't a concrete residential home for sale.
+
+    A real apartment/house listing always states a living area and a price.
+    Plots, commercial/office premises and 'coming soon' stubs usually omit the
+    living area, so they sail past the size/budget filters that KEEP unknowns —
+    this catches them. Configure which fields are mandatory.
+    config:  require: [size, price]   # any listed field missing -> excluded
+    """
+    key = "listing_complete"
+    title = "Complete home listing"
+    _CHECKS = {
+        "size": (lambda l: l.size_m2 is not None, "no living area stated — not a residential home"),
+        "price": (lambda l: l.price is not None, "no sale price stated"),
+        "rooms": (lambda l: l.rooms is not None, "no room count stated"),
+    }
+
+    def check(self, listing) -> Verdict:
+        for field in self.config.get("require", ["size", "price"]):
+            chk = self._CHECKS.get(field)
+            if chk and not chk[0](listing):
+                return Verdict(False, chk[1])
+        return Verdict(True, "complete listing")
+
+
+@register
 class PropertyTypeAllowed(FilterCriterion):
     """Only allow certain property types (omakotitalo / rivitalo / ...).
 

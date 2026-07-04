@@ -54,6 +54,9 @@ criteria:
     min_price_per_m2: 1500   # no real Helsinki house sells below this €/m²
     on_unknown: keep
 
+  listing_complete:          # must be a real home for sale — not a plot / office / stub
+    require: [size, price]   # any of these missing -> excluded (a home always states both)
+
   property_type:             # houses + duplex apartments (kerrostalo pre-filtered to duplex only)
     allowed: [omakotitalo, rivitalo, paritalo, erillistalo, kerrostalo]
     on_unknown: keep
