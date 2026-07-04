@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS listings (
     delisted_at  TEXT,
     prev_price   REAL,                  -- price just before the most recent drop
     price_dropped_at TEXT,              -- when that drop was detected
+    price_history TEXT,                 -- JSON [[iso_date, price], ...] as observed over time
     data         TEXT NOT NULL          -- full Listing as JSON
 );
 
@@ -63,7 +64,8 @@ class Store:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as c:
             c.executescript(SCHEMA)
-            for col in ("prev_price REAL", "price_dropped_at TEXT"):   # migrate old DBs
+            for col in ("prev_price REAL", "price_dropped_at TEXT",
+                        "price_history TEXT"):                          # migrate old DBs
                 try:
                     c.execute(f"ALTER TABLE listings ADD COLUMN {col}")
                 except sqlite3.OperationalError:
@@ -92,7 +94,7 @@ class Store:
             for lst in listings:
                 lst.last_seen = now
                 row = c.execute(
-                    "SELECT first_seen, price, prev_price, price_dropped_at "
+                    "SELECT first_seen, price, prev_price, price_dropped_at, price_history "
                     "FROM listings WHERE uid=?", (lst.uid,)
                 ).fetchone()
                 if row is None:
@@ -110,25 +112,52 @@ class Store:
                         lst.prev_price = old
                         lst.price_dropped_at = now
                         dropped.append((lst.uid, old, lst.price))
+                lst.price_history = self._accumulate_history(
+                    row["price_history"] if row else None, lst, now)
                 c.execute(
                     """INSERT INTO listings
                        (uid, source, source_id, url, title, price, size_m2, rooms,
                         first_seen, last_seen, delisted, delisted_at,
-                        prev_price, price_dropped_at, data)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,0,NULL,?,?,?)
+                        prev_price, price_dropped_at, price_history, data)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,0,NULL,?,?,?,?)
                        ON CONFLICT(uid) DO UPDATE SET
                         url=excluded.url, title=excluded.title, price=excluded.price,
                         size_m2=excluded.size_m2, rooms=excluded.rooms,
                         last_seen=excluded.last_seen, delisted=0, delisted_at=NULL,
                         prev_price=excluded.prev_price,
                         price_dropped_at=excluded.price_dropped_at,
+                        price_history=excluded.price_history,
                         data=excluded.data""",
                     (lst.uid, lst.source, lst.source_id, lst.url, lst.title,
                      lst.price, lst.size_m2, lst.rooms, lst.first_seen,
                      lst.last_seen, lst.prev_price, lst.price_dropped_at,
+                     json.dumps(lst.price_history, ensure_ascii=False),
                      json.dumps(lst.to_dict(), ensure_ascii=False)),
                 )
         return {"new": new_uids, "updated": updated_uids, "dropped": dropped}
+
+    @staticmethod
+    def _accumulate_history(stored_json: Optional[str], lst: Listing, now: str) -> list:
+        """Append the current price to the observed history when it moved.
+
+        Seeds from the drop we already track (prev_price) so the chart isn't empty
+        the very first time this runs on an existing DB.
+        """
+        history = []
+        if stored_json:
+            try:
+                history = json.loads(stored_json) or []
+            except (ValueError, TypeError):
+                history = []
+        if not history:
+            if lst.prev_price is not None and lst.price_dropped_at:
+                history = [[lst.first_seen or lst.price_dropped_at, lst.prev_price],
+                           [lst.price_dropped_at, lst.price]]
+            elif lst.price is not None:
+                history = [[lst.first_seen or now, lst.price]]
+        elif lst.price is not None and history[-1][1] != lst.price:
+            history.append([now, lst.price])
+        return history[-60:]
 
     def mark_delisted(self, seen_uids: set[str], sources: set[str]) -> list[str]:
         """Any active listing from `sources` NOT in `seen_uids` is now delisted."""

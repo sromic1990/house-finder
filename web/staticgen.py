@@ -52,6 +52,44 @@ def _in_envelope(L, browse) -> bool:
     return True
 
 
+# Fields that make a listing trustworthy to act on. label -> present? predicate.
+_CONFIDENCE_FIELDS = [
+    ("price", lambda L: L.price is not None),
+    ("size", lambda L: L.size_m2 is not None),
+    ("build year", lambda L: L.year_built is not None),
+    ("rooms", lambda L: L.rooms is not None),
+    ("location", lambda L: L.lat is not None and L.lon is not None),
+    ("sauna", lambda L: L.features.get("sauna") is not None),
+    ("parking", lambda L: L.features.get("parking") is not None),
+    ("plot ownership", lambda L: L.features.get("land_ownership") is not None),
+    ("maintenance charge", lambda L: L.features.get("maintenance") is not None),
+    ("energy class", lambda L: L.features.get("energy_class") is not None),
+]
+
+
+def _confidence(L) -> dict:
+    """How complete/verifiable this listing's data is: a % plus what's unknown."""
+    missing = [label for label, ok in _CONFIDENCE_FIELDS if not ok(L)]
+    known = len(_CONFIDENCE_FIELDS) - len(missing)
+    pct = round(100 * known / len(_CONFIDENCE_FIELDS))
+    level = "high" if pct >= 80 else "medium" if pct >= 55 else "low"
+    return {"pct": pct, "level": level, "missing": missing}
+
+
+def _effective_history(L) -> list:
+    """Observed price points [[iso, price], ...]. Falls back to the tracked drop
+    (prev_price -> price) when the accumulated series isn't populated yet."""
+    hist = list(L.price_history or [])
+    if hist:
+        return hist
+    if L.prev_price is not None and L.price_dropped_at:
+        return [[L.first_seen or L.price_dropped_at, L.prev_price],
+                [L.price_dropped_at, L.price]]
+    if L.price is not None:
+        return [[L.first_seen, L.price]]
+    return []
+
+
 def _candidate_payload(L, filters, scorers, prev, year_now, medians, type_medians, overall, cost_cfg) -> dict:
     tm = L.features.get("transit_minutes") or {}
     reno = renovation_risk(L, year_now)
@@ -94,6 +132,8 @@ def _candidate_payload(L, filters, scorers, prev, year_now, medians, type_median
         "parking_rank": _PARK_RANK.get((L.features.get("parking") or {}).get("type")),
         "new": L.uid not in prev,
         "prev_price": L.prev_price, "dropped_at": L.price_dropped_at,
+        "first_seen": L.first_seen, "last_seen": L.last_seen,
+        "price_history": _effective_history(L), "confidence": _confidence(L),
         "pass": passes, "contribs": contribs,
         "reno_risk": reno, "bank_risk": bank, "cost": cost,
         "reno_planned": L.features.get("reno_planned"),
@@ -243,6 +283,20 @@ _EXTRA_CSS = """
 .risk-row ul{margin:2px 0 0;padding-left:18px;color:#444}
 .risk-row li{font-size:13px;margin:2px 0}
 .risk-disc{color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:10px;margin-top:6px}
+.trust{display:flex;gap:14px;align-items:center;margin-top:8px;font-size:12px;color:var(--muted);font-weight:600}
+.trust .conf{display:inline-flex;align-items:center;gap:5px}
+.trust .dot{width:8px;height:8px;border-radius:50%;background:#0f9d58;display:inline-block}
+.trust .conf-medium{color:#c6741f}.trust .conf-medium .dot{background:#e8892b}
+.trust .conf-low{color:#d9480f}.trust .conf-low .dot{background:#e03131}
+.hist-box{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:24px}
+.hist-box h2{font-size:16px;margin:2px 0 12px}
+.hist-block{margin-bottom:12px}
+.spark{width:100%;height:52px;display:block;background:linear-gradient(180deg,transparent,rgba(0,0,0,.03));border-radius:8px}
+.hist-sub{font-size:13px;color:var(--muted);margin-top:6px}
+.hist-tbl{width:100%;border-collapse:collapse}
+.hist-tbl th{text-align:left;color:var(--muted);font-weight:500;padding:5px 0;width:58%}
+.hist-tbl td{text-align:right;padding:5px 0;font-weight:600}
+.hist-missing{color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:10px;margin-top:8px}
 #refreshBtn{background:var(--top);color:#fff;border-color:var(--top)}
 #refreshBtn:disabled{opacity:.6;cursor:default}
 .rf-overlay{position:fixed;inset:0;background:rgba(8,10,14,.74);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:2000}
@@ -328,7 +382,8 @@ html.dark .card-media,html.dark .noimg,html.dark .score-bar{background:#1f2531}
 html.dark .score-badge,html.dark .modal-close,html.dark .controls select,html.dark .controls button,
 html.dark .rk,html.dark .ct,html.dark .tp,html.dark .filters-panel,html.dark .price-pill,
 html.dark .facts-box,html.dark .score-box,html.dark .cost-box,html.dark .risk-box,
-html.dark .mk,html.dark .excluded-table{background:#171a21;color:var(--ink)}
+html.dark .hist-box,html.dark .mk,html.dark .excluded-table{background:#171a21;color:var(--ink)}
+html.dark .spark{background:linear-gradient(180deg,transparent,rgba(255,255,255,.04))}
 html.dark .chk{background:#20242e}
 html.dark .chip{background:#222b3d;color:#bcc8e0}
 html.dark .card-type{background:#241f38;color:#c4b5fd}
@@ -397,6 +452,48 @@ function dropInfo(L){
   if((Date.now()-Date.parse(L.dropped_at))/86400000 > 21) return null;   // only recent drops
   return {amt:L.prev_price-L.price, prev:L.prev_price, pct:Math.round((L.prev_price-L.price)/L.prev_price*100)};
 }
+// ---- data-trust + history helpers ----
+function daysAgo(iso){ if(!iso) return null; return Math.max(0, Math.floor((Date.now()-Date.parse(iso))/86400000)); }
+function timeAgo(iso){ if(!iso) return ''; const h=(Date.now()-Date.parse(iso))/3600000;
+  if(h<1) return t('just_now'); if(h<24) return t('hours_ago',{n:Math.max(1,Math.round(h))});
+  return t('days_ago',{n:Math.round(h/24)}); }
+function sparkline(hist){
+  const pts=(hist||[]).filter(p=>p&&p[1]!=null);
+  if(pts.length<2) return '';
+  const ys=pts.map(p=>p[1]), min=Math.min(...ys), max=Math.max(...ys), span=(max-min)||1;
+  const W=260,H=46,pad=5;
+  const xs=i=> pad + i*(W-2*pad)/(pts.length-1);
+  const yv=v=> H-pad - (v-min)/span*(H-2*pad);
+  const path=pts.map((p,i)=>(i?'L':'M')+xs(i).toFixed(1)+' '+yv(p[1]).toFixed(1)).join(' ');
+  const first=pts[0][1], last=pts[pts.length-1][1];
+  const col=last<first?'#0f9d58':(last>first?'#e03131':'#8a94a6');
+  const dots=pts.map((p,i)=>'<circle cx="'+xs(i).toFixed(1)+'" cy="'+yv(p[1]).toFixed(1)+'" r="2.6" fill="'+col+'"/>').join('');
+  return '<svg class="spark" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" role="img">'
+    +'<path d="'+path+'" fill="none" stroke="'+col+'" stroke-width="2" vector-effect="non-scaling-stroke"/>'+dots+'</svg>';
+}
+function historySection(L){
+  const hist=L.price_history||[], conf=L.confidence, dom=daysAgo(L.first_seen);
+  let block='';
+  const spark=sparkline(hist);
+  if(spark){
+    const first=hist[0][1], last=hist[hist.length-1][1], diff=last-first;
+    const dtxt = diff===0 ? t('price_flat')
+      : (diff<0?'↓ ':'↑ ')+euro(Math.abs(diff))+' '+t('since_listed');
+    block='<div class="hist-block">'+spark+'<div class="hist-sub"><b>'+esc(dtxt)+'</b> · '
+      +hist.length+' '+esc(t('data_points'))+'</div></div>';
+  } else {
+    block='<div class="hist-sub">'+esc(t('price_no_change'))+'</div>';
+  }
+  const rows=[];
+  if(dom!=null) rows.push([t('days_on_market'), dom+' '+t('unit_days')]);
+  if(L.first_seen) rows.push([t('first_listed'), new Date(L.first_seen).toLocaleDateString()]);
+  if(L.last_seen) rows.push([t('last_checked'), timeAgo(L.last_seen)]);
+  if(conf) rows.push([t('data_confidence'), conf.pct+'% · '+esc(t('conf_'+conf.level))]);
+  const tbl='<table class="hist-tbl">'+rows.map(r=>'<tr><th>'+esc(r[0])+'</th><td>'+esc(r[1])+'</td></tr>').join('')+'</table>';
+  const miss=(conf&&conf.missing&&conf.missing.length)
+    ? '<div class="hist-missing">'+esc(t('not_verified'))+': '+conf.missing.map(esc).join(', ')+'</div>' : '';
+  return '<section class="hist-box"><h2>'+esc(t('data_heading'))+'</h2>'+block+tbl+miss+'</section>';
+}
 
 // ---- state ----
 let mapOn = localStorage.getItem('mapOn')==='1';
@@ -441,7 +538,7 @@ function ranked(){
   // cross-posted as e.g. omakotitalo AND erillistalo could keep showing under a
   // type you unchecked, via its other copy.
   let rows = DATA.listings.map(L=>{ const s=scoreOf(L); return {L, score:s.score, priority:s.priority}; });
-  const rich = r => ((r.L.features&&r.L.features.maintenance!=null)?2:0)+(r.L.reno_planned?1:0)+((r.L.features&&r.L.features.land_ownership)?1:0);
+  const rich = r => ((r.L.features&&r.L.features.maintenance!=null)?2:0)+(r.L.reno_planned?1:0)+((r.L.features&&r.L.features.land_ownership)?1:0)+((r.L.price_history&&r.L.price_history.length>1)?1:0);
   const best=new Map(), singles=[];
   for(const r of rows){ const k=dedupKey(r.L);
     if(!k){ singles.push(r); continue; }
@@ -495,7 +592,14 @@ function card(r){
     +(L.cost?'<div class="cost-line" title="'+esc(t('cost_heading'))+'">≈ '+euro(L.cost.monthly)+' / '+esc(t('per_month'))+' <span class="cost-sub">'+esc(t('cost_tag'))+(L.cost.charges_estimated?' *':'')+'</span></div>':'')
     +'<div class="card-facts">'+fa+'</div><div class="card-chips">'+chips+'</div>'
     +'<div class="risks">'+riskPill('bank_label',L.bank_risk)+riskPill('reno_label',L.reno_risk)+'</div>'
+    +trustLine(L)
     +'<a class="src-link-card" href="'+esc(L.url)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+esc(t('view_on',{source:L.source}))+'</a></div></article>';
+}
+function trustLine(L){
+  const dom=daysAgo(L.first_seen), c=L.confidence; if(dom==null&&!c) return '';
+  const days = dom!=null ? '<span title="'+esc(t('days_on_market'))+'">🕒 '+dom+esc(t('unit_days_short'))+'</span>' : '';
+  const conf = c ? '<span class="conf conf-'+c.level+'" title="'+esc(t('data_confidence'))+' — '+esc(c.missing&&c.missing.length?t('not_verified')+': '+c.missing.join(', '):t('all_known'))+'"><i class="dot"></i>'+c.pct+'%</span>' : '';
+  return '<div class="trust">'+days+conf+'</div>';
 }
 function wireCards(root){ root.querySelectorAll('.card').forEach(c=>c.onclick=()=>openModal(c.dataset.id)); }
 function riskSection(L){
@@ -672,6 +776,7 @@ function openModal(id){
     +'<section class="score-box"><h2>'+esc(t('why_rank'))+'</h2><ul class="score-list">'+bars+'</ul></section></div>'
     +costSection(L)
     +riskSection(L)
+    +historySection(L)
     +(plans?'<section><h2>'+esc(t('floor_plan'))+'</h2><div class="gallery">'+plans+'</div></section>':'')
     +(L.lat&&L.lon?'<section><h2>'+esc(t('location'))+'</h2><div id="dmap" style="height:320px;border-radius:12px"></div></section>':'');
   document.getElementById('modalBack').classList.add('open');

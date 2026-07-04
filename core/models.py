@@ -91,6 +91,7 @@ class Listing:
     delisted: bool = False
     prev_price: Optional[float] = None       # price just before the most recent drop
     price_dropped_at: Optional[str] = None   # when we detected that drop (ISO)
+    price_history: list = field(default_factory=list)  # [[iso_date, price], ...] as observed
 
     # ---- Derived helpers --------------------------------------------------
     @property
