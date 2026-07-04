@@ -311,6 +311,35 @@ img{max-width:100%}
   .map-pane{height:42vh}
   .rf-card{padding:26px 20px calc(26px + env(safe-area-inset-bottom))}
 }
+
+/* =====================================================================
+   DARK THEME — applied when <html> has class "dark". Redefines the core
+   variables (so anything using them flips automatically) plus targeted
+   overrides for the hard-coded light surfaces. Last in the cascade.
+   ===================================================================== */
+html.dark{
+  --bg:#0f1115; --card:#171a21; --ink:#e8eaed; --muted:#98a1ad;
+  --line:#2a2f39; --accent:#6aa4ff; --top:#22c55e; --new:#fb923c;
+  --shadow:0 1px 3px rgba(0,0,0,.45),0 8px 24px rgba(0,0,0,.55);
+  color-scheme:dark;
+}
+html.dark .site-header{background:#141821}
+html.dark .card-media,html.dark .noimg,html.dark .score-bar{background:#1f2531}
+html.dark .score-badge,html.dark .modal-close,html.dark .controls select,html.dark .controls button,
+html.dark .rk,html.dark .ct,html.dark .tp,html.dark .filters-panel,html.dark .price-pill,
+html.dark .facts-box,html.dark .score-box,html.dark .cost-box,html.dark .risk-box,
+html.dark .mk,html.dark .excluded-table{background:#171a21;color:var(--ink)}
+html.dark .chk{background:#20242e}
+html.dark .chip{background:#222b3d;color:#bcc8e0}
+html.dark .card-type{background:#241f38;color:#c4b5fd}
+html.dark .cost-line{color:var(--ink)}
+html.dark .reno-list,html.dark .risk-row ul,html.dark .risk-row li,html.dark .mk .i .t{color:#c4c9d2}
+html.dark .pass-chip{background:#123021;color:#4ade80}
+html.dark .src-link-card:hover,html.dark .langs .lang:hover:not(.active),
+html.dark .site-header nav>a:hover{background:#20242e}
+html.dark .card-price,html.dark .detail-price,html.dark .cost-big{color:var(--ink)}
+html.dark .leaflet-tile{filter:brightness(.85) contrast(1.05)}
+.theme-toggle{cursor:pointer;font-size:16px;line-height:1}
 """
 
 _TEMPLATE = r"""<!doctype html>
@@ -324,6 +353,7 @@ _TEMPLATE = r"""<!doctype html>
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Houses">
 <title>House Leaderboard</title>
+<script>try{var _t=localStorage.getItem('theme');if(_t==='dark'||(!_t&&window.matchMedia&&matchMedia('(prefers-color-scheme:dark)').matches)){document.documentElement.classList.add('dark');}}catch(e){}</script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>/*CSS*/</style>
@@ -499,7 +529,9 @@ function render(){
   const typeChips=ALL_TYPES.map(x=>'<span class="tp '+(enabledTypes.has(x)?'on':'')+'" data-tp="'+esc(x)+'">'+esc(cap(x))+'</span>').join('');
   document.getElementById('app').innerHTML=
     '<header class="site-header"><a class="brand" href="#">🏠 '+esc(DATA.title)+'</a>'
-    +'<nav><a href="#" id="mapToggle" class="'+(mapOn?'active':'')+'">🗺 '+esc(t('map_view'))+'</a><span class="langs">'+langs+'</span></nav></header>'
+    +'<nav><a href="#" id="mapToggle" class="'+(mapOn?'active':'')+'">🗺 '+esc(t('map_view'))+'</a>'
+    +'<a href="#" id="themeToggle" class="theme-toggle" title="'+esc(t('theme_toggle'))+'" aria-label="'+esc(t('theme_toggle'))+'">'+(document.documentElement.classList.contains('dark')?'☀️':'🌙')+'</a>'
+    +'<span class="langs">'+langs+'</span></nav></header>'
     +'<main><div class="board-intro"><h1 id="headline"></h1>'
     +'<p>'+esc(t('index_sub',{top_n:DATA.top_n}))+' <span class="stamp">· '+esc(DATA.generated)+'</span></p></div>'
     +'<div class="controls"><button id="filtersBtn">⚙ '+esc(t('filters'))+'</button>'
@@ -522,6 +554,11 @@ function render(){
     if(enabledTypes.has(x)){ if(enabledTypes.size>1) enabledTypes.delete(x); } else enabledTypes.add(x);
     localStorage.setItem('types',JSON.stringify([...enabledTypes])); el.classList.toggle('on',enabledTypes.has(x)); renderContent(); });
   document.getElementById('filtersBtn').onclick=()=>document.getElementById('filtersPanel').classList.toggle('open');
+  document.getElementById('themeToggle').onclick=e=>{e.preventDefault();
+    const dark=document.documentElement.classList.toggle('dark');
+    localStorage.setItem('theme',dark?'dark':'light');
+    e.currentTarget.textContent=dark?'☀️':'🌙';
+    const tc=document.querySelector('meta[name=theme-color]'); if(tc) tc.setAttribute('content',dark?'#0f1115':'#ffffff'); };
   document.getElementById('mapToggle').onclick=e=>{e.preventDefault();mapOn=!mapOn;localStorage.setItem('mapOn',mapOn?'1':'0');render();};
   if(DATA.dispatch){ const rb=document.getElementById('refreshBtn'); if(rb) rb.onclick=doRefresh; }
   renderContent();
