@@ -153,8 +153,11 @@ class ResidentialCompleteness(FilterCriterion):
     A real apartment/house listing always states a living area and a price.
     Plots, commercial/office premises and 'coming soon' stubs usually omit the
     living area, so they sail past the size/budget filters that KEEP unknowns —
-    this catches them. Configure which fields are mandatory.
-    config:  require: [size, price]   # any listed field missing -> excluded
+    this catches them. As a second layer it also drops anything whose title
+    names it as business premises (a home title never says "toimisto").
+    config:
+      require: [size, price]                  # any listed field missing -> excluded
+      exclude_keywords: [toimisto, ...]        # commercial words in the title -> excluded
     """
     key = "listing_complete"
     title = "Complete home listing"
@@ -163,12 +166,19 @@ class ResidentialCompleteness(FilterCriterion):
         "price": (lambda l: l.price is not None, "no sale price stated"),
         "rooms": (lambda l: l.rooms is not None, "no room count stated"),
     }
+    # Unambiguous business-premises terms — none appear in a residential title.
+    _COMMERCIAL = ("toimisto", "liikehuoneist", "liikekiinteist", "toimitila",
+                   "liiketila", "myymälä", "teollisuus")
 
     def check(self, listing) -> Verdict:
         for field in self.config.get("require", ["size", "price"]):
             chk = self._CHECKS.get(field)
             if chk and not chk[0](listing):
                 return Verdict(False, chk[1])
+        blob = (listing.title or "").lower()
+        for w in self.config.get("exclude_keywords", self._COMMERCIAL):
+            if w in blob:
+                return Verdict(False, f"business premises, not a home ({w})")
         return Verdict(True, "complete listing")
 
 

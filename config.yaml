@@ -57,9 +57,9 @@ criteria:
   listing_complete:          # must be a real home for sale — not a plot / office / stub
     require: [size, price]   # any of these missing -> excluded (a home always states both)
 
-  property_type:             # houses + duplex apartments (kerrostalo pre-filtered to duplex only)
+  property_type:             # ONLY real residential homes — offices, commercial
     allowed: [omakotitalo, rivitalo, paritalo, erillistalo, kerrostalo]
-    on_unknown: keep
+    on_unknown: exclude      # premises & plots arrive with an unmapped/empty type -> drop them
 
   bedrooms:                  # bedrooms excl. living room (derives rooms-1)
     min: 3
