@@ -266,13 +266,63 @@ _EXTRA_CSS = """
 @keyframes rfbar{0%{left:-40%}100%{left:105%}}
 .rf-wait{color:#6b7280;font-size:12px;margin-top:14px}
 .rf-close{margin-top:14px;background:none;border:0;color:#9aa1ab;font-size:13px;cursor:pointer;text-decoration:underline}
+
+/* =====================================================================
+   MOBILE — scoped so the desktop view is byte-for-byte unchanged. Placed
+   LAST in the cascade so it wins over base + _EXTRA_CSS on shared classes.
+   Goals: zero horizontal scroll + a native-app feel on phones.
+   ===================================================================== */
+/* Safe global guards (no visual effect on desktop): never scroll sideways;
+   never let an image or long word push the layout wider than the screen. */
+html,body{max-width:100%;overflow-x:hidden}
+body{-webkit-text-size-adjust:100%}
+img{max-width:100%}
+.card-title,.board-intro h1,.detail-addr,.detail-head h1{overflow-wrap:anywhere}
+.list-pane,.map-pane,.card-body{min-width:0}
+@media(max-width:640px){
+  *{-webkit-tap-highlight-color:transparent}
+  input,select,textarea{font-size:16px}
+  main{padding:14px 12px calc(48px + env(safe-area-inset-bottom))}
+  .site-header{padding:11px 14px;padding-top:calc(11px + env(safe-area-inset-top));gap:8px}
+  .brand{font-size:15px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .site-header nav{flex:none}
+  .site-header nav>a{margin-left:10px;font-size:14px}
+  .langs{margin-left:10px}
+  .board-intro h1{font-size:20px}
+  .board-intro p{font-size:13px}
+  .grid,.list-pane .grid{grid-template-columns:1fr;gap:14px}
+  .card{border-radius:16px}
+  .card:hover{transform:none}
+  .card:active{transform:scale(.985);transition:transform .08s ease}
+  .controls,.rankbar,.citybar{gap:8px}
+  .controls button{padding:10px 14px;font-size:14px}
+  .count{width:100%;margin:2px 0 0;text-align:left}
+  .bar-label{width:100%;margin:2px 0}
+  .rk,.ct,.tp,.chk{padding:9px 14px;font-size:14px}
+  .filters-panel{padding:12px}
+  .modal-back{padding:0;align-items:stretch}
+  .modal{max-width:100%;min-height:100%;border-radius:0}
+  .modal-inner{padding:16px 15px calc(28px + env(safe-area-inset-bottom))}
+  .modal-close{top:calc(8px + env(safe-area-inset-top));width:38px;height:38px}
+  .cost-box,.risk-box,.facts-box,.score-box{padding:14px}
+  .score-list li{grid-template-columns:1fr 60px 28px;gap:8px}
+  .detail-head{flex-direction:column;gap:8px}
+  .gallery{grid-template-columns:1fr 1fr}
+  .map-pane{height:42vh}
+  .rf-card{padding:26px 20px calc(26px + env(safe-area-inset-bottom))}
+}
 """
 
 _TEMPLATE = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Houses">
 <title>House Leaderboard</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
