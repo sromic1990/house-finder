@@ -60,10 +60,13 @@ main { max-width: 1160px; margin: 0 auto; padding: 24px 20px 60px; }
   font-weight: 700; font-size: 11px; letter-spacing: .5px; padding: 3px 8px; border-radius: 6px;
 }
 .card-body { padding: 12px 14px 14px; }
+.card-type { display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: #7048e8; background: #f2effc; padding: 2px 8px; border-radius: 6px; margin-bottom: 6px; }
 .card-title { font-weight: 600; font-size: 16px; display: block; margin-bottom: 4px; }
 .card-title:hover { color: var(--accent); }
 .card-price { font-weight: 700; font-size: 16px; }
 .ppm2 { color: var(--muted); font-weight: 500; font-size: 13px; }
+.ppm2-high { color: #d9480f; }
+.area-line { color: var(--muted); font-size: 12px; margin-top: 2px; }
 .card-facts { display: flex; flex-wrap: wrap; gap: 6px 12px; color: var(--muted); font-size: 13px; margin: 6px 0; }
 .card-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chip { background: #eef2f7; color: #33415c; font-size: 11.5px; padding: 3px 8px; border-radius: 999px; }

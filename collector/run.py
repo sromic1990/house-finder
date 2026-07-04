@@ -58,11 +58,6 @@ def collect_once(config: dict, store: Store) -> dict:
     by_uid = {l.uid: l for l in all_listings}
     listings = list(by_uid.values())
 
-    # Apartment blocks (kerrostalo) are only wanted when the flat is a confirmed
-    # duplex (two-floor / maisonette); drop the rest so they never enter the pool.
-    listings = [l for l in listings
-                if l.property_type != "kerrostalo" or l.features.get("duplex") is True]
-
     changes = store.upsert_listings(listings)
     delisted = store.mark_delisted(set(by_uid), active_sources)
     log.info("upsert: %d new, %d updated, %d delisted",

@@ -82,6 +82,7 @@ def _candidate_payload(L, filters, scorers, prev, year_now, medians, type_median
     return {
         "id": L.uid, "source": L.source, "url": L.url, "title": L.title,
         "price": L.price, "ppm2": L.price_per_m2, "size": L.size_m2,
+        "area_ppm2": round(med) if med else None,   # bank's reference: median €/m² for this type nearby
         "rooms": L.rooms, "bedrooms": L.bedrooms, "year": L.year_built,
         "floor": L.floor, "type": L.property_type,
         "address": L.address, "district": L.district,
@@ -355,8 +356,11 @@ const DIMS = {
 const RANK_ORDER=[['best','sort_best'],['price','sort_price'],['cost5y','sort_cost'],['ppm2','sort_ppm2'],['size','sort_size'],['bedrooms','sort_bedrooms'],['transit','sort_transit'],['station','sort_station'],['year','sort_year'],['parking','sort_parking'],['reno_safe','sort_reno'],['bank_safe','sort_bank']];
 function dedupKey(L){ const a=(L.address||'').toLowerCase().replace(/[^a-z0-9äöå]/g,''); return a?a+'|'+L.size+'|'+L.rooms:null; }
 function ranked(){
-  let rows = DATA.listings.filter(included).map(L=>{ const s=scoreOf(L); return {L, score:s.score, priority:s.priority}; });
-  // de-dup cross-posted copies, keeping the one with the most detail data
+  // De-dup cross-posted copies FIRST (before any city/type/criteria filter), so a
+  // property collapses to ONE canonical card with ONE type. Otherwise a home
+  // cross-posted as e.g. omakotitalo AND erillistalo could keep showing under a
+  // type you unchecked, via its other copy.
+  let rows = DATA.listings.map(L=>{ const s=scoreOf(L); return {L, score:s.score, priority:s.priority}; });
   const rich = r => ((r.L.features&&r.L.features.maintenance!=null)?2:0)+(r.L.reno_planned?1:0)+((r.L.features&&r.L.features.land_ownership)?1:0);
   const best=new Map(), singles=[];
   for(const r of rows){ const k=dedupKey(r.L);
@@ -364,7 +368,7 @@ function ranked(){
     const cur=best.get(k);
     if(!cur || rich(r)>rich(cur) || (rich(r)===rich(cur) && ((r.priority-cur.priority)||(r.score-cur.score))>0)) best.set(k,r);
   }
-  rows=[...best.values(), ...singles];
+  rows=[...best.values(), ...singles].filter(r=>included(r.L));
   // Own plot ALWAYS beats a rented plot, in every ranking mode (own > unknown > rented).
   const landTier=r=>{ const v=r.L.features&&r.L.features.land_ownership; return v==='own'?2:(v==='rented'?0:1); };
   const dims=[...rankBy].filter(d=>DIMS[d]); if(!dims.length) dims.push('best');
@@ -405,8 +409,9 @@ function card(r){
   const fa=[L.size!=null?L.size+' m²':'', L.rooms!=null?L.rooms+' '+t('unit_rooms'):'', L.year||'', L.district||L.city].filter(Boolean).map(x=>'<span>'+esc(x)+'</span>').join('');
   return '<article class="card '+(top?'card-top':'')+'" data-id="'+esc(L.id)+'">'
     +'<div class="card-media">'+img+'<span class="rank-badge">#'+r.rank+'</span><span class="score-badge">'+r.score+'</span>'+(L.new?'<span class="new-badge">'+esc(t('badge_new'))+'</span>':'')+(d?'<span class="drop-badge">▼ '+euroK(d.amt)+'</span>':'')+'</div>'
-    +'<div class="card-body"><div class="card-title">'+esc(L.title)+'</div>'
-    +'<div class="card-price">'+euro(L.price)+(d?' <span class="drop-was">↓ '+euro(d.amt)+' · '+esc(t('was'))+' '+euro(d.prev)+'</span>':'')+(L.ppm2?' <span class="ppm2">· '+euro(L.ppm2)+'/m²</span>':'')+'</div>'
+    +'<div class="card-body">'+(L.type?'<div class="card-type">'+esc(cap(L.type))+'</div>':'')+'<div class="card-title">'+esc(L.title)+'</div>'
+    +'<div class="card-price">'+euro(L.price)+(d?' <span class="drop-was">↓ '+euro(d.amt)+' · '+esc(t('was'))+' '+euro(d.prev)+'</span>':'')+(L.ppm2?' <span class="ppm2'+(L.area_ppm2&&L.ppm2>1.15*L.area_ppm2?' ppm2-high':'')+'">· '+euro(L.ppm2)+'/m²</span>':'')+'</div>'
+    +(L.area_ppm2?'<div class="area-line" title="'+esc(t('area_price_tip'))+'">'+esc(t('area_price'))+' ≈ '+euro(L.area_ppm2)+'/m²</div>':'')
     +(L.cost?'<div class="cost-line" title="'+esc(t('cost_heading'))+'">≈ '+euro(L.cost.monthly)+' / '+esc(t('per_month'))+' <span class="cost-sub">'+esc(t('cost_tag'))+(L.cost.charges_estimated?' *':'')+'</span></div>':'')
     +'<div class="card-facts">'+fa+'</div><div class="card-chips">'+chips+'</div>'
     +'<div class="risks">'+riskPill('bank_label',L.bank_risk)+riskPill('reno_label',L.reno_risk)+'</div>'
