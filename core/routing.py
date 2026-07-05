@@ -72,3 +72,40 @@ def transit_minutes(lat: float, lon: float, destinations: dict | None = None) ->
         except Exception:
             pass  # best-effort: a failed leg just stays unknown
     return out
+
+
+def geocode(text: str, key: str | None = None) -> Optional[tuple]:
+    """Resolve a free-text address to (lat, lon) via Digitransit geocoding, or None."""
+    key = key or _api_key()
+    if not key or not text:
+        return None
+    try:
+        r = requests.get(
+            "https://api.digitransit.fi/geocoding/v1/search",
+            params={"text": text, "size": 1},
+            headers={"digitransit-subscription-key": key}, timeout=20)
+        r.raise_for_status()
+        feats = r.json().get("features") or []
+        if feats:
+            lon, lat = feats[0]["geometry"]["coordinates"]
+            return (float(lat), float(lon))
+    except Exception:
+        pass
+    return None
+
+
+def configured_destinations(dest_list: list | None) -> dict:
+    """Turn config `commute.destinations` (name + lat/lon OR address) into
+    {name: (lat, lon)}. Falls back to the city-centre + airport defaults."""
+    out = {}
+    for d in dest_list or []:
+        name = (d or {}).get("name")
+        if not name:
+            continue
+        if d.get("lat") is not None and d.get("lon") is not None:
+            out[name] = (float(d["lat"]), float(d["lon"]))
+        elif d.get("address"):
+            c = geocode(d["address"])
+            if c:
+                out[name] = c
+    return out or dict(DEFAULT_DESTINATIONS)

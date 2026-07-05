@@ -607,6 +607,11 @@ const DIMS = {
   cost5y:{get:r=>r.L.cost?r.L.cost.monthly:null,hi:false},
 };
 const RANK_ORDER=[['best','sort_best'],['price','sort_price'],['cost5y','sort_cost'],['ppm2','sort_ppm2'],['size','sort_size'],['bedrooms','sort_bedrooms'],['transit','sort_transit'],['station','sort_station'],['year','sort_year'],['parking','sort_parking'],['reno_safe','sort_reno'],['bank_safe','sort_bank']];
+// Your commute destinations (from features.transit_minutes), in a stable order.
+const COMMUTE_DESTS=(()=>{ const seen=[]; for(const L of DATA.listings){ const tm=L.features&&L.features.transit_minutes; if(tm) for(const k in tm) if(!seen.includes(k)) seen.push(k); } return seen; })();
+function destLabel(n){ const k='dest_'+n, l=t(k); return l===k?n:l; }
+function transitTo(L,n){ const tm=L.features&&L.features.transit_minutes; return tm&&tm[n]!=null?tm[n]:null; }
+COMMUTE_DESTS.forEach(n=>{ DIMS['cm_'+n]={get:r=>transitTo(r.L,n),hi:false}; });
 function dedupKey(L){ const a=(L.address||'').toLowerCase().replace(/[^a-z0-9äöå]/g,''); return a?a+'|'+L.size+'|'+L.rooms:null; }
 function ranked(){
   // De-dup cross-posted copies FIRST (before any city/type/criteria filter), so a
@@ -653,6 +658,8 @@ function facts(L){
   if(f.parking) add('fact_parking', PARK[f.parking.type]||f.parking.type);
   if(f.land_ownership) add('fact_land', t('land_'+f.land_ownership));
   if(f.energy_class) add('fact_energy', f.energy_class);
+  for(const n of COMMUTE_DESTS){ const mi=transitTo(L,n); if(mi!=null)
+    rows.push('<tr><th>🚆 '+esc(destLabel(n))+'</th><td>'+mi+' '+esc(t('unit_min'))+' '+esc(t('by_transit'))+'</td></tr>'); }
   return '<table>'+rows.join('')+'</table>';
 }
 function card(r){
@@ -668,7 +675,7 @@ function card(r){
     +'<div class="card-price">'+euro(L.price)+(d?' <span class="drop-was">↓ '+euro(d.amt)+' · '+esc(t('was'))+' '+euro(d.prev)+'</span>':'')+(L.ppm2?' <span class="ppm2'+(L.area_ppm2&&L.ppm2>1.15*L.area_ppm2?' ppm2-high':'')+'">· '+euro(L.ppm2)+'/m²</span>':'')+'</div>'
     +(L.area_ppm2?'<div class="area-line" title="'+esc(t('area_price_tip'))+'">'+esc(t('area_price'))+' ≈ '+euro(L.area_ppm2)+'/m²</div>':'')
     +(L.cost?'<div class="cost-line" title="'+esc(t('cost_heading'))+'">≈ '+euro(L.cost.monthly)+' / '+esc(t('per_month'))+' <span class="cost-sub">'+esc(t('cost_tag'))+(L.cost.charges_estimated?' *':'')+'</span></div>':'')
-    +'<div class="card-facts">'+fa+'</div><div class="card-chips">'+chips+'</div>'
+    +'<div class="card-facts">'+fa+'</div>'+commuteLine(L)+'<div class="card-chips">'+chips+'</div>'
     +'<div class="risks">'+riskPill('bank_label',L.bank_risk)+riskPill('reno_label',L.reno_risk)+'</div>'
     +trustLine(L)
     +'<div class="mark-actions">'
@@ -677,6 +684,11 @@ function card(r){
       +(m.note?'<span class="mk-note-flag" title="'+esc(m.note)+'">📝</span>':'')
     +'</div>'
     +'<a class="src-link-card" href="'+esc(L.url)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+esc(t('view_on',{source:L.source}))+'</a></div></article>';
+}
+function commuteLine(L){
+  if(!COMMUTE_DESTS.length) return '';
+  const parts=COMMUTE_DESTS.map(n=>{ const m=transitTo(L,n); return m==null?null:'<span>'+esc(destLabel(n))+' '+m+'m</span>'; }).filter(Boolean);
+  return parts.length?'<div class="commute-line">🚆 '+parts.join(' · ')+'</div>':'';
 }
 function trustLine(L){
   const dom=daysAgo(L.first_seen), c=L.confidence; if(dom==null&&!c) return '';
@@ -792,7 +804,8 @@ function costSection(L){
 function render(){
   document.documentElement.lang=lang;
   const langs=Object.keys(DATA.langs).map(c=>'<a href="#" class="lang '+(c===lang?'active':'')+'" data-lang="'+c+'">'+DATA.langs[c]+'</a>').join('');
-  const rankChips=RANK_ORDER.map(o=>'<span class="rk '+(rankBy.has(o[0])?'on':'')+'" data-rk="'+o[0]+'">'+esc(t(o[1]))+'</span>').join('');
+  const rankChips=RANK_ORDER.map(o=>'<span class="rk '+(rankBy.has(o[0])?'on':'')+'" data-rk="'+o[0]+'">'+esc(t(o[1]))+'</span>').join('')
+    +COMMUTE_DESTS.map(n=>'<span class="rk '+(rankBy.has('cm_'+n)?'on':'')+'" data-rk="cm_'+n+'" title="'+esc(t('sort_commute'))+'">⏱ '+esc(destLabel(n))+'</span>').join('');
   const cityChips=ALL_CITIES.map(c=>'<span class="ct '+(enabledCities.has(c)?'on':'')+'" data-ct="'+esc(c)+'">'+esc(c)+'</span>').join('');
   const typeChips=ALL_TYPES.map(x=>'<span class="tp '+(enabledTypes.has(x)?'on':'')+'" data-tp="'+esc(x)+'">'+esc(cap(x))+'</span>').join('');
   document.getElementById('app').innerHTML=

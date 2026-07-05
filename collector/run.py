@@ -28,7 +28,7 @@ except ImportError:
 from core.config import load_config
 from core.criteria import build_criteria
 from core.notify import notify_new_top_entries, notify_price_drops
-from core.routing import transit_minutes
+from core.routing import configured_destinations, transit_minutes
 from core.scoring import rank_listings
 from db import Store
 
@@ -73,6 +73,10 @@ def collect_once(config: dict, store: Store) -> dict:
     candidates = rank_listings(active, prelim_criteria)
     log.info("prelim: %d candidates (of %d fetched)", len(candidates), len(active))
 
+    # Your commute destinations (config.commute.destinations), resolved to coords
+    # once per run; each candidate is routed to any it doesn't already have.
+    commute_dests = configured_destinations(config.get("commute", {}).get("destinations"))
+
     # Detail-enrich candidates (cheap: dozens of fetches) with data absent from
     # the list endpoints: land ownership, confirmed parking, and travel time.
     enriched = []
@@ -93,12 +97,15 @@ def collect_once(config: dict, store: Store) -> dict:
                     if best != L.features.get("parking"):
                         L.features["parking"] = best
                 changed = True
-        if search.get("enrich_transit") and not L.features.get("transit_minutes") \
-                and L.lat is not None:
-            tm = transit_minutes(L.lat, L.lon)
-            if tm:
-                L.features["transit_minutes"] = tm
-                changed = True
+        if search.get("enrich_transit") and L.lat is not None:
+            have = L.features.get("transit_minutes") or {}
+            missing = {n: c for n, c in commute_dests.items() if n not in have}
+            if missing:
+                tm = transit_minutes(L.lat, L.lon, missing)
+                if tm:
+                    have.update(tm)
+                    L.features["transit_minutes"] = have
+                    changed = True
         if changed:
             enriched.append(L)
     if enriched:

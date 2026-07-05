@@ -18,6 +18,18 @@ search:
   # stores the minutes so the `travel_time` criterion can filter on them.
   enrich_transit: true
 
+# YOUR commute destinations (needs DIGITRANSIT_KEY) -------------------------
+# Each home is routed to every destination by public transport; the page shows
+# the door-to-door minutes and lets you sort by each. Give lat/lon (exact) or an
+# `address` (geocoded for you). Add/rename freely — new ones route on next run.
+# The two defaults (center/airport) match what's already stored; keep or edit.
+commute:
+  destinations:
+    - { name: center,  lat: 60.1719, lon: 24.9414 }   # Helsinki Central (shown as "City centre")
+    - { name: airport, lat: 60.3172, lon: 24.9633 }   # Helsinki-Vantaa
+    # - { name: Work,   address: "Keilaniemi, Espoo" }
+    # - { name: Family, lat: 60.29, lon: 25.04 }
+
 sources:
   # Live scrapers (working). Flip mock on for offline/demo use.
   mock:     { enabled: false }
