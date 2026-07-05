@@ -25,10 +25,9 @@ search:
 # The two defaults (center/airport) match what's already stored; keep or edit.
 commute:
   destinations:
-    - { name: center,  lat: 60.1719, lon: 24.9414 }   # Helsinki Central (shown as "City centre")
-    - { name: airport, lat: 60.3172, lon: 24.9633 }   # Helsinki-Vantaa
-    # - { name: Work,   address: "Keilaniemi, Espoo" }
-    # - { name: Family, lat: 60.29, lon: 25.04 }
+    - { name: center,   lat: 60.1719, lon: 24.9414 }        # Helsinki Central (shown as "City centre")
+    - { name: Tietotie, address: "Tietotie 9, Espoo" }       # wife's work (Otaniemi, West Metro)
+    - { name: airport,  lat: 60.3172, lon: 24.9633 }         # Helsinki-Vantaa (info only)
 
 sources:
   # Live scrapers (working). Flip mock on for offline/demo use.
@@ -59,7 +58,7 @@ criteria:
     on_unknown: keep
 
   min_size:
-    min_m2: 100              # hard floor — smaller is excluded
+    min_m2: 95               # hard floor — smaller is excluded (eased from 100)
     on_unknown: keep
 
   ownership_sanity:          # drop asumisoikeus / osaomistus (not full purchase)
@@ -82,8 +81,8 @@ criteria:
     required: true
     on_unknown: keep
 
-  toilets:                   # at least two toilets
-    min: 2
+  toilets:                   # was a hard 2-toilet rule; now soft — see toilets_pref
+    min: 1                    # only excludes a confirmed zero-toilet home
     on_unknown: keep
 
   parking_min:               # deal-breaker is ONLY an open spot with a heating pole
@@ -91,12 +90,12 @@ criteria:
     on_unknown: keep         # excludes only confirmed open_pole / none
 
 
-  built_after:               # newer than 1975
-    year: 1975
+  built_after:               # newer than 1970 (eased from 1975)
+    year: 1970
     on_unknown: keep
 
-  station_distance:          # within 1 km of a metro / train station
-    max_km: 1.0
+  station_distance:          # within 1.5 km of a station (eased from 1 km) — the
+    max_km: 1.5              # commute-TIME ranking below is the real proximity test
     on_unknown: keep
 
   # --- RANKING PREFERENCES (weights are relative; tune freely) ------------
@@ -119,11 +118,16 @@ criteria:
     far_km: 2.5             # >=2.5 km -> 0
     # stations: []          # optional; defaults to Helsinki metro + rail list
 
-  travel_time:               # PREFERENCE: shorter transit to center/airport (needs DIGITRANSIT_KEY)
-    weight: 3
+  travel_time:               # PREFERENCE: fast transit to BOTH daily commutes (needs DIGITRANSIT_KEY)
+    weight: 4                 # bumped: this is your real "near good transport" test
     good_minutes: 30         # <=30 min -> full marks
     bad_minutes: 60          # >=60 min -> 0
-    destinations: [center, airport]
+    destinations: [center, Tietotie]   # your + your wife's commutes (airport excluded — not daily)
+    aggregate: worst         # score on the SLOWER of the two, so a home must be fast to both
+
+  toilets_pref:              # prefer 2+ toilets (the softened 2-toilet want)
+    weight: 1
+    target: 2
 
   own_land:                  # PRIORITY TIER: own-plot houses rank above leased ones
     priority: true           # all own-land above all leased, regardless of score

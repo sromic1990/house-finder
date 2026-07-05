@@ -457,6 +457,25 @@ class RoomsPreference(ScoreCriterion):
 
 
 @register
+class ToiletsPreference(ScoreCriterion):
+    """Prefer more toilets — 2+ is the sweet spot for a family home.
+
+    config:  weight: 1   target: 2
+    """
+    key = "toilets_pref"
+    title = "Toilets"
+
+    def applies(self, listing) -> bool:
+        return listing.features.get("toilets") is not None
+
+    def score(self, listing) -> Contribution:
+        n = listing.features.get("toilets")
+        target = float(self.config.get("target", 2))
+        raw = 1.0 if n >= target else (0.5 if n >= 1 else 0.0)
+        return Contribution(raw, self.weight, f"{n} toilet(s)")
+
+
+@register
 class CommutePreference(ScoreCriterion):
     """Closer to any configured target (straight-line km) ranks higher.
 
@@ -603,7 +622,16 @@ class TravelTimeScore(ScoreCriterion):
         tt = listing.features.get("transit_minutes") or {}
         dests = self.config.get("destinations", ["center", "airport"])
         vals = [tt[d] for d in dests if tt.get(d) is not None]
-        return min(vals) if vals else None
+        if not vals:
+            return None
+        # 'worst' rewards homes fast to EVERY destination (both commutes), while
+        # 'best' (default) rewards being fast to the nearest one.
+        agg = self.config.get("aggregate", "best")
+        if agg in ("worst", "max"):
+            return max(vals)
+        if agg in ("mean", "avg"):
+            return sum(vals) / len(vals)
+        return min(vals)
 
     def applies(self, listing) -> bool:
         return self._minutes(listing) is not None
