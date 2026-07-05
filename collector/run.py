@@ -88,7 +88,7 @@ def collect_once(config: dict, store: Store) -> dict:
             if detail:
                 L.features["detail_fetched"] = True
                 for k in ("land_ownership", "maintenance", "financing_fee",
-                          "charge_total", "reno_planned", "reno_done"):
+                          "charge_total", "reno_planned", "reno_done", "commercial"):
                     v = detail.get(k)
                     if v is not None and k not in L.features:
                         L.features[k] = v
@@ -144,6 +144,9 @@ def collect_once(config: dict, store: Store) -> dict:
             detail = fetch_detail(L.url)
             if not detail:
                 continue
+            if detail.get("commercial") and not L.features.get("commercial"):
+                L.features["commercial"] = True   # backfill: hides it from next render/run
+                v_changed.append(L)
             nv = detail.get("viewings") or []
             if not L.features.get("viewings_tracked"):
                 L.features["viewings"] = nv
@@ -158,7 +161,7 @@ def collect_once(config: dict, store: Store) -> dict:
                 if fresh:
                     v_new.append((L, fresh))
         if v_changed:
-            store.upsert_listings(v_changed)
+            store.upsert_listings(list({L.uid: L for L in v_changed}.values()))
         if v_new:
             notify_viewings(v_new, config=config, board_url=board_url)
             log.info("viewing email: %d board listing(s) with new viewing times", len(v_new))

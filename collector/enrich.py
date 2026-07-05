@@ -127,6 +127,8 @@ def fetch_detail(url: str) -> dict:
                      ("viewings", _viewings(flat))):
         if val is not None:
             out[key] = val
+    if _looks_commercial(flat):
+        out["commercial"] = True
     return out
 
 
@@ -137,6 +139,22 @@ _VIEW_LABEL = re.compile(r"Esittely\w*|Yleisesittely|Avoimet ovet|Näyt[öo]\w*|
 _VIEW_DT = re.compile(
     r"(?:(?:ma|ti|ke|to|pe|la|su)\s*)?\d{1,2}\.\d{1,2}\.(?:\d{2,4})?\s*klo\s*"
     r"\d{1,2}[.:]\d{2}(?:\s*[–\-—]\s*\d{1,2}[.:]\d{2})?", re.I)
+
+
+# Non-home listings that sit in the "Asunnot" category: an office/business unit
+# sold as a conversion project (e.g. "toimistohuoneisto, muutettavissa asunnoiksi").
+# Precise stems avoid false hits: "toimistohuoneist" (the UNIT is office premises,
+# not "toimistohuone" = a home office room); a "convert to apartments" phrase (a
+# real home is already an apartment); or an explicit "not for residential use".
+_COMMERCIAL = re.compile(
+    r"toimistohuoneist\w*"
+    r"|(?:muutettav\w*|muunnettav\w*|muunneltav\w*)\s+(?:\S+\s+){0,4}?asunno"
+    r"|ei\s+asuinkäyt\w*",
+    re.I)
+
+
+def _looks_commercial(flat: str) -> bool:
+    return bool(flat and _COMMERCIAL.search(flat))
 
 
 def _viewings(flat: str):

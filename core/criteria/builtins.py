@@ -175,6 +175,10 @@ class ResidentialCompleteness(FilterCriterion):
             chk = self._CHECKS.get(field)
             if chk and not chk[0](listing):
                 return Verdict(False, chk[1])
+        # flagged from the detail-page description (collector/enrich.py): an office/
+        # business unit sold as a home-conversion project, listed under "Asunnot".
+        if listing.features.get("commercial"):
+            return Verdict(False, "office/commercial premises (per the listing description)")
         blob = (listing.title or "").lower()
         for w in self.config.get("exclude_keywords", self._COMMERCIAL):
             if w in blob:
