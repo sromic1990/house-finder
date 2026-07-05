@@ -321,6 +321,23 @@ _EXTRA_CSS = """
 .cmp-col-head .ch-title{font-weight:700;font-size:13px;line-height:1.3;margin-bottom:4px}
 .cmp-col-head .ch-link{display:block;font-size:12px;color:var(--accent);font-weight:600;margin-bottom:4px}
 .cmp-col-head .ch-rm{color:var(--new);cursor:pointer;font-size:12px;border:0;background:none;padding:0}
+.viewbar{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+.vw{font-size:13.5px;font-weight:700;padding:7px 14px;border-radius:999px;border:1px solid var(--line);background:#fff;color:var(--muted);cursor:pointer;user-select:none}
+.vw b{color:var(--ink);margin-left:2px}
+.vw.on{background:var(--ink);color:#fff;border-color:var(--ink)}.vw.on b{color:#fff}
+.mark-actions{display:flex;gap:8px;align-items:center;margin-top:10px}
+.mk-btn{font-size:12.5px;font-weight:700;padding:6px 11px;border-radius:8px;border:1px solid var(--line);background:#fff;color:var(--ink);cursor:pointer}
+.mk-btn:hover{border-color:var(--ink)}
+.mk-save.on{background:#fff7e0;border-color:#f5b301;color:#8a6100}
+.mk-dismiss.on{background:#fdecec;border-color:#e03131;color:#b02020}
+.mk-note-flag{font-size:14px;margin-left:auto}
+.card.saved{outline:2px solid #f5b301;outline-offset:-1px}
+.card.dismissed{opacity:.5}
+.detail-marks{display:flex;gap:10px;margin:12px 0 0}
+.detail-marks .mk-btn{font-size:14px;padding:9px 16px}
+.note-box{background:#fff;border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:24px}
+.note-box h2{font-size:16px;margin:2px 0 10px}
+.note-box textarea{width:100%;min-height:82px;border:1px solid var(--line);border-radius:9px;padding:10px;font:inherit;font-size:14px;resize:vertical;background:var(--bg);color:var(--ink)}
 #refreshBtn{background:var(--top);color:#fff;border-color:var(--top)}
 #refreshBtn:disabled{opacity:.6;cursor:default}
 .rf-overlay{position:fixed;inset:0;background:rgba(8,10,14,.74);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:2000}
@@ -406,7 +423,11 @@ html.dark .card-media,html.dark .noimg,html.dark .score-bar{background:#1f2531}
 html.dark .score-badge,html.dark .modal-close,html.dark .controls select,html.dark .controls button,
 html.dark .rk,html.dark .ct,html.dark .tp,html.dark .filters-panel,html.dark .price-pill,
 html.dark .facts-box,html.dark .score-box,html.dark .cost-box,html.dark .risk-box,
-html.dark .hist-box,html.dark .mk,html.dark .excluded-table{background:#171a21;color:var(--ink)}
+html.dark .hist-box,html.dark .note-box,html.dark .mk,html.dark .mk-btn,html.dark .vw,
+html.dark .excluded-table{background:#171a21;color:var(--ink)}
+html.dark .mk-save.on{background:#3a2f10;border-color:#f5b301;color:#f0c85a}
+html.dark .mk-dismiss.on{background:#3a1c1c;border-color:#e05656;color:#f0a0a0}
+html.dark .note-box textarea{background:#0f1115}
 html.dark .spark{background:linear-gradient(180deg,transparent,rgba(255,255,255,.04))}
 html.dark .chk{background:#20242e}
 html.dark .chip{background:#222b3d;color:#bcc8e0}
@@ -537,6 +558,23 @@ const ALL_TYPES = [...new Set(DATA.listings.map(L=>L.type).filter(Boolean))].sor
 let enabledTypes = (()=>{ const s=JSON.parse(localStorage.getItem('types')||'null');
   const set=new Set(s? s.filter(x=>ALL_TYPES.includes(x)) : ALL_TYPES); return set.size?set:new Set(ALL_TYPES); })();
 
+// ---- shortlist / triage marks (persisted per-device) ----
+// Keyed by a STABLE property key (address+size+rooms) so a save survives a
+// re-scrape even if the displayed source copy changes.
+let marks = (()=>{ try{ return JSON.parse(localStorage.getItem('marks')||'{}'); }catch(e){ return {}; } })();
+let markDirty=false;
+let viewMode = localStorage.getItem('viewMode')||'all';   // all | saved | dismissed
+function markKey(L){ return dedupKey(L)||L.id; }
+function getMark(L){ return marks[markKey(L)]||{}; }
+function setMark(L, patch){ const k=markKey(L); const m={...(marks[k]||{}),...patch};
+  if(!m.save) delete m.save; if(!m.dismiss) delete m.dismiss; if(!m.note) delete m.note;
+  if(Object.keys(m).length) marks[k]=m; else delete marks[k];
+  try{ localStorage.setItem('marks', JSON.stringify(marks)); }catch(e){} }
+function includedByMark(L){ const m=getMark(L);
+  if(viewMode==='saved') return !!m.save;
+  if(viewMode==='dismissed') return !!m.dismiss;
+  return !m.dismiss; }   // 'all' view hides the ones you've rejected
+
 // ---- compute ----
 function bd(L){ return L.bedrooms!=null?L.bedrooms:(L.rooms!=null?L.rooms-1:null); }
 function scoreOf(L){
@@ -545,11 +583,20 @@ function scoreOf(L){
     if(c.prio){ prio+=c.raw*c.weight; pw+=c.weight; } else { num+=c.raw*c.weight; den+=c.weight; } }
   return {score: den?Math.round(1000*num/den)/10:0, priority: pw?prio/pw:0};
 }
-function included(L){
+function passesBase(L){   // everything except the shortlist/dismiss view filter
   if(enabledCities.size && !enabledCities.has(L.city)) return false;
   if(enabledTypes.size && L.type && !enabledTypes.has(L.type)) return false;
   for(const k of FILTER_KEYS){ if(enabled.has(k) && L.pass[k]===false) return false; }
   return true;
+}
+function included(L){ return includedByMark(L) && passesBase(L); }
+function richness(L){ return ((L.features&&L.features.maintenance!=null)?2:0)+(L.reno_planned?1:0)+((L.features&&L.features.land_ownership)?1:0)+((L.price_history&&L.price_history.length>1)?1:0); }
+function baseDedup(){   // one row per property, richest copy — no filters applied
+  const best=new Map(), singles=[];
+  for(const L of DATA.listings){ const k=dedupKey(L);
+    if(!k){ singles.push(L); continue; }
+    const cur=best.get(k); if(!cur || richness(L)>richness(cur)) best.set(k,L); }
+  return [...best.values(), ...singles];
 }
 // rankable dimensions: value getter + whether higher is better
 const DIMS = {
@@ -567,7 +614,7 @@ function ranked(){
   // cross-posted as e.g. omakotitalo AND erillistalo could keep showing under a
   // type you unchecked, via its other copy.
   let rows = DATA.listings.map(L=>{ const s=scoreOf(L); return {L, score:s.score, priority:s.priority}; });
-  const rich = r => ((r.L.features&&r.L.features.maintenance!=null)?2:0)+(r.L.reno_planned?1:0)+((r.L.features&&r.L.features.land_ownership)?1:0)+((r.L.price_history&&r.L.price_history.length>1)?1:0);
+  const rich = r => richness(r.L);
   const best=new Map(), singles=[];
   for(const r of rows){ const k=dedupKey(r.L);
     if(!k){ singles.push(r); continue; }
@@ -613,8 +660,9 @@ function card(r){
   const img=L.photos&&L.photos[0]?'<img loading="lazy" src="'+esc(L.photos[0])+'" alt="">':'<div class="noimg">—</div>';
   const chips=L.contribs.filter(c=>enabled.has(c.key)).map(c=>'<span class="chip">'+esc(c.label)+'</span>').join('');
   const fa=[L.size!=null?L.size+' m²':'', L.rooms!=null?L.rooms+' '+t('unit_rooms'):'', L.year||'', L.district||L.city].filter(Boolean).map(x=>'<span>'+esc(x)+'</span>').join('');
-  const sel=compareSet.has(L.id);
-  return '<article class="card '+(top?'card-top ':'')+(sel?'cmp-on':'')+'" data-id="'+esc(L.id)+'">'
+  const sel=compareSet.has(L.id), m=getMark(L);
+  const cls=['card',top?'card-top':'',sel?'cmp-on':'',m.save?'saved':'',m.dismiss?'dismissed':''].filter(Boolean).join(' ');
+  return '<article class="'+cls+'" data-id="'+esc(L.id)+'">'
     +'<div class="card-media">'+img+'<span class="rank-badge">#'+r.rank+'</span><span class="score-badge">'+r.score+'</span>'+(L.new?'<span class="new-badge">'+esc(t('badge_new'))+'</span>':'')+(d?'<span class="drop-badge">▼ '+euroK(d.amt)+'</span>':'')+'<button class="cmp-btn'+(sel?' on':'')+'" data-cmp="'+esc(L.id)+'" title="'+esc(t('compare_add'))+'">'+(sel?'✓':'+')+'</button></div>'
     +'<div class="card-body">'+(L.type?'<div class="card-type">'+esc(cap(L.type))+'</div>':'')+'<div class="card-title">'+esc(L.title)+'</div>'
     +'<div class="card-price">'+euro(L.price)+(d?' <span class="drop-was">↓ '+euro(d.amt)+' · '+esc(t('was'))+' '+euro(d.prev)+'</span>':'')+(L.ppm2?' <span class="ppm2'+(L.area_ppm2&&L.ppm2>1.15*L.area_ppm2?' ppm2-high':'')+'">· '+euro(L.ppm2)+'/m²</span>':'')+'</div>'
@@ -623,6 +671,11 @@ function card(r){
     +'<div class="card-facts">'+fa+'</div><div class="card-chips">'+chips+'</div>'
     +'<div class="risks">'+riskPill('bank_label',L.bank_risk)+riskPill('reno_label',L.reno_risk)+'</div>'
     +trustLine(L)
+    +'<div class="mark-actions">'
+      +'<button class="mk-btn mk-save'+(m.save?' on':'')+'" data-mk="save">'+(m.save?'★ '+esc(t('saved')):'☆ '+esc(t('save')))+'</button>'
+      +'<button class="mk-btn mk-dismiss'+(m.dismiss?' on':'')+'" data-mk="dismiss">'+(m.dismiss?esc(t('undo')):'🗑 '+esc(t('dismiss')))+'</button>'
+      +(m.note?'<span class="mk-note-flag" title="'+esc(m.note)+'">📝</span>':'')
+    +'</div>'
     +'<a class="src-link-card" href="'+esc(L.url)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+esc(t('view_on',{source:L.source}))+'</a></div></article>';
 }
 function trustLine(L){
@@ -634,6 +687,11 @@ function trustLine(L){
 function wireCards(root){
   root.querySelectorAll('.card').forEach(c=>c.onclick=()=>openModal(c.dataset.id));
   root.querySelectorAll('.cmp-btn').forEach(b=>b.onclick=e=>{ e.stopPropagation(); toggleCompare(b.dataset.cmp); });
+  root.querySelectorAll('.mk-btn').forEach(b=>b.onclick=e=>{ e.stopPropagation();
+    const L=DATA.listings.find(x=>x.id===b.closest('.card').dataset.id); if(!L) return; const cur=getMark(L);
+    if(b.dataset.mk==='save') setMark(L,{save:!cur.save, dismiss:false});
+    else setMark(L,{dismiss:!cur.dismiss, save:false});
+    renderContent(); renderViewBar(); });
 }
 // ---- compare tray + side-by-side ----
 let compareSet = new Set((()=>{ try{ return JSON.parse(localStorage.getItem('compare')||'[]'); }catch(e){ return []; } })());
@@ -747,6 +805,7 @@ function render(){
     +'<div class="controls"><button id="filtersBtn">⚙ '+esc(t('filters'))+'</button>'
     +(DATA.dispatch?'<button id="refreshBtn">🔄 '+esc(t('rf_button'))+'</button>':'')
     +'<span class="count" id="count"></span></div>'
+    +'<div class="viewbar" id="viewBar"></div>'
     +'<div class="rankbar"><span class="bar-label">'+esc(t('sort_by'))+'</span>'+rankChips+'</div>'
     +(ALL_TYPES.length>1?'<div class="citybar"><span class="bar-label">'+esc(t('types_label'))+'</span>'+typeChips+'</div>':'')
     +(ALL_CITIES.length>1?'<div class="citybar"><span class="bar-label">'+esc(t('cities_label'))+'</span>'+cityChips+'</div>':'')
@@ -771,8 +830,19 @@ function render(){
     const tc=document.querySelector('meta[name=theme-color]'); if(tc) tc.setAttribute('content',dark?'#0f1115':'#ffffff'); };
   document.getElementById('mapToggle').onclick=e=>{e.preventDefault();mapOn=!mapOn;localStorage.setItem('mapOn',mapOn?'1':'0');render();};
   if(DATA.dispatch){ const rb=document.getElementById('refreshBtn'); if(rb) rb.onclick=doRefresh; }
+  renderViewBar();
   renderContent();
 }
+// ---- shortlist view bar (All / ⭐ Shortlist / 🗑 Dismissed) ----
+function markCounts(){ let all=0, saved=0, dismissed=0;
+  for(const L of baseDedup()){ if(!passesBase(L)) continue; const m=getMark(L);
+    if(m.dismiss) dismissed++; else all++; if(m.save) saved++; } return {all,saved,dismissed}; }
+function renderViewBar(){ const bar=document.getElementById('viewBar'); if(!bar) return;
+  const c=markCounts();
+  const item=(v,label,n)=>'<span class="vw '+(viewMode===v?'on':'')+'" data-vw="'+v+'">'+esc(label)+' <b>'+n+'</b></span>';
+  bar.innerHTML=item('all',t('view_all'),c.all)+item('saved','⭐ '+t('view_saved'),c.saved)+item('dismissed','🗑 '+t('view_dismissed'),c.dismissed);
+  bar.querySelectorAll('.vw').forEach(el=>el.onclick=()=>{ viewMode=el.dataset.vw; localStorage.setItem('viewMode',viewMode);
+    renderViewBar(); renderContent(); }); }
 
 // ---- manual refresh (trigger the GitHub Action) ----
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -877,21 +947,32 @@ function openModal(id){
     +'<h1>'+esc(L.title)+'</h1><div class="detail-addr">'+esc([L.address,L.district,L.city].filter(Boolean).join(', '))+'</div>'
     +'<div class="detail-price">'+euro(L.price)+(d?' <span class="drop-was">↓ '+euro(d.amt)+' · '+esc(t('was'))+' '+euro(d.prev)+'</span>':'')+(L.ppm2?' <span class="ppm2">'+euro(L.ppm2)+'/m²</span>':'')+'</div>'
     +'<a class="src-link" href="'+esc(L.url)+'" target="_blank" rel="noopener">'+esc(t('view_on',{source:L.source}))+'</a>'
+    +'<div class="detail-marks"><button class="mk-btn mk-save" id="mSave"></button><button class="mk-btn mk-dismiss" id="mDismiss"></button></div>'
     +(gallery?'<div class="gallery" style="margin-top:16px">'+gallery+'</div>':'')
     +'<div class="detail-cols"><section class="facts-box"><h2>'+esc(t('key_facts'))+'</h2>'+facts(L)+'</section>'
     +'<section class="score-box"><h2>'+esc(t('why_rank'))+'</h2><ul class="score-list">'+bars+'</ul></section></div>'
+    +'<section class="note-box"><h2>📝 '+esc(t('notes'))+'</h2><textarea id="noteArea" placeholder="'+esc(t('note_ph'))+'">'+esc(getMark(L).note||'')+'</textarea></section>'
     +costSection(L)
     +riskSection(L)
     +historySection(L)
     +(plans?'<section><h2>'+esc(t('floor_plan'))+'</h2><div class="gallery">'+plans+'</div></section>':'')
     +(L.lat&&L.lon?'<section><h2>'+esc(t('location'))+'</h2><div id="dmap" style="height:320px;border-radius:12px"></div></section>':'');
+  const sv=document.getElementById('mSave'), ds=document.getElementById('mDismiss'), na=document.getElementById('noteArea');
+  const paint=()=>{ const m=getMark(L);
+    sv.className='mk-btn mk-save'+(m.save?' on':''); sv.textContent=m.save?'★ '+t('saved'):'☆ '+t('save');
+    ds.className='mk-btn mk-dismiss'+(m.dismiss?' on':''); ds.textContent=m.dismiss?t('undo'):'🗑 '+t('dismiss'); };
+  paint();
+  sv.onclick=()=>{ const c=getMark(L); setMark(L,{save:!c.save,dismiss:false}); paint(); renderContent(); renderViewBar(); };
+  ds.onclick=()=>{ const c=getMark(L); setMark(L,{dismiss:!c.dismiss,save:false}); paint(); renderContent(); renderViewBar(); };
+  na.oninput=()=>{ setMark(L,{note:na.value}); markDirty=true; };
   document.getElementById('modalBack').classList.add('open');
   if(L.lat&&L.lon){ if(window._dm){window._dm.remove();} window._dm=L2map(L); }
 }
 function L2map(L){ const m=window.L.map('dmap').setView([L.lat,L.lon],14);
   window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(m);
   window.L.marker([L.lat,L.lon]).addTo(m); setTimeout(()=>m.invalidateSize(),50); return m; }
-function closeModal(){ document.getElementById('modalBack').classList.remove('open'); if(window._dm){window._dm.remove();window._dm=null;} }
+function closeModal(){ document.getElementById('modalBack').classList.remove('open'); if(window._dm){window._dm.remove();window._dm=null;}
+  if(markDirty){ markDirty=false; renderContent(); renderViewBar(); } }
 document.getElementById('modalClose').onclick=closeModal;
 document.getElementById('modalBack').onclick=e=>{ if(e.target.id==='modalBack') closeModal(); };
 document.getElementById('compareClose').onclick=closeCompare;
