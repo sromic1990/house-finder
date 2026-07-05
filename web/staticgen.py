@@ -297,6 +297,30 @@ _EXTRA_CSS = """
 .hist-tbl th{text-align:left;color:var(--muted);font-weight:500;padding:5px 0;width:58%}
 .hist-tbl td{text-align:right;padding:5px 0;font-weight:600}
 .hist-missing{color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:10px;margin-top:8px}
+.cmp-btn{position:absolute;bottom:10px;right:10px;width:30px;height:30px;border-radius:50%;border:1.5px solid #fff;background:rgba(17,24,32,.62);color:#fff;font-size:17px;font-weight:700;cursor:pointer;display:grid;place-items:center;line-height:1;z-index:3;padding:0}
+.cmp-btn:hover{transform:scale(1.12)}
+.cmp-btn.on{background:var(--accent);border-color:#fff}
+.card.cmp-on{outline:2px solid var(--accent);outline-offset:-1px}
+.compare-bar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:1500;display:none;align-items:center;gap:12px;background:#12151b;color:#fff;border-radius:999px;padding:9px 9px 9px 18px;box-shadow:0 12px 34px rgba(0,0,0,.4)}
+.compare-bar.show{display:flex}
+.compare-bar .cb-label{font-size:13px;font-weight:600;color:#c9ced8;white-space:nowrap}
+.compare-bar .cb-thumbs{display:flex}
+.compare-bar .cb-thumbs img{width:34px;height:34px;border-radius:8px;object-fit:cover;border:2px solid #12151b;margin-left:-8px}
+.compare-bar .cb-go{background:var(--top);color:#fff;border:0;border-radius:999px;padding:9px 18px;font-weight:700;font-size:14px;cursor:pointer}
+.compare-bar .cb-go:disabled{opacity:.5;cursor:default}
+.compare-bar .cb-clear{background:none;border:0;color:#c9ced8;font-size:13px;cursor:pointer;padding:0 6px}
+.cmp-modal{max-width:1080px}
+.cmp-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:12px}
+.cmp-table{width:100%;border-collapse:collapse;font-size:13.5px}
+.cmp-table th,.cmp-table td{padding:10px 13px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+.cmp-table tr:last-child td{border-bottom:0}
+.cmp-metric{color:var(--muted);font-weight:600;white-space:nowrap;position:sticky;left:0;background:var(--bg)}
+.cmp-table td.cmp-best{color:var(--top);font-weight:800}
+.cmp-col-head{min-width:158px;font-weight:400}
+.cmp-col-head img{width:100%;height:92px;object-fit:cover;border-radius:8px;margin-bottom:6px;display:block}
+.cmp-col-head .ch-title{font-weight:700;font-size:13px;line-height:1.3;margin-bottom:4px}
+.cmp-col-head .ch-link{display:block;font-size:12px;color:var(--accent);font-weight:600;margin-bottom:4px}
+.cmp-col-head .ch-rm{color:var(--new);cursor:pointer;font-size:12px;border:0;background:none;padding:0}
 #refreshBtn{background:var(--top);color:#fff;border-color:var(--top)}
 #refreshBtn:disabled{opacity:.6;cursor:default}
 .rf-overlay{position:fixed;inset:0;background:rgba(8,10,14,.74);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:2000}
@@ -420,6 +444,11 @@ _TEMPLATE = r"""<!doctype html>
   <button class="modal-close" id="modalClose">&times;</button>
   <div id="modalBody"></div>
 </div></div></div>
+<div class="modal-back" id="compareBack"><div class="modal cmp-modal"><div class="modal-inner">
+  <button class="modal-close" id="compareClose">&times;</button>
+  <div id="compareBody"></div>
+</div></div></div>
+<div class="compare-bar" id="compareBar"></div>
 <div class="rf-overlay" id="rfOverlay"><div class="rf-card">
   <div class="rf-radar"><span>🏠</span></div>
   <div class="rf-title" id="rfTitle"></div>
@@ -584,8 +613,9 @@ function card(r){
   const img=L.photos&&L.photos[0]?'<img loading="lazy" src="'+esc(L.photos[0])+'" alt="">':'<div class="noimg">—</div>';
   const chips=L.contribs.filter(c=>enabled.has(c.key)).map(c=>'<span class="chip">'+esc(c.label)+'</span>').join('');
   const fa=[L.size!=null?L.size+' m²':'', L.rooms!=null?L.rooms+' '+t('unit_rooms'):'', L.year||'', L.district||L.city].filter(Boolean).map(x=>'<span>'+esc(x)+'</span>').join('');
-  return '<article class="card '+(top?'card-top':'')+'" data-id="'+esc(L.id)+'">'
-    +'<div class="card-media">'+img+'<span class="rank-badge">#'+r.rank+'</span><span class="score-badge">'+r.score+'</span>'+(L.new?'<span class="new-badge">'+esc(t('badge_new'))+'</span>':'')+(d?'<span class="drop-badge">▼ '+euroK(d.amt)+'</span>':'')+'</div>'
+  const sel=compareSet.has(L.id);
+  return '<article class="card '+(top?'card-top ':'')+(sel?'cmp-on':'')+'" data-id="'+esc(L.id)+'">'
+    +'<div class="card-media">'+img+'<span class="rank-badge">#'+r.rank+'</span><span class="score-badge">'+r.score+'</span>'+(L.new?'<span class="new-badge">'+esc(t('badge_new'))+'</span>':'')+(d?'<span class="drop-badge">▼ '+euroK(d.amt)+'</span>':'')+'<button class="cmp-btn'+(sel?' on':'')+'" data-cmp="'+esc(L.id)+'" title="'+esc(t('compare_add'))+'">'+(sel?'✓':'+')+'</button></div>'
     +'<div class="card-body">'+(L.type?'<div class="card-type">'+esc(cap(L.type))+'</div>':'')+'<div class="card-title">'+esc(L.title)+'</div>'
     +'<div class="card-price">'+euro(L.price)+(d?' <span class="drop-was">↓ '+euro(d.amt)+' · '+esc(t('was'))+' '+euro(d.prev)+'</span>':'')+(L.ppm2?' <span class="ppm2'+(L.area_ppm2&&L.ppm2>1.15*L.area_ppm2?' ppm2-high':'')+'">· '+euro(L.ppm2)+'/m²</span>':'')+'</div>'
     +(L.area_ppm2?'<div class="area-line" title="'+esc(t('area_price_tip'))+'">'+esc(t('area_price'))+' ≈ '+euro(L.area_ppm2)+'/m²</div>':'')
@@ -601,7 +631,83 @@ function trustLine(L){
   const conf = c ? '<span class="conf conf-'+c.level+'" title="'+esc(t('data_confidence'))+' — '+esc(c.missing&&c.missing.length?t('not_verified')+': '+c.missing.join(', '):t('all_known'))+'"><i class="dot"></i>'+c.pct+'%</span>' : '';
   return '<div class="trust">'+days+conf+'</div>';
 }
-function wireCards(root){ root.querySelectorAll('.card').forEach(c=>c.onclick=()=>openModal(c.dataset.id)); }
+function wireCards(root){
+  root.querySelectorAll('.card').forEach(c=>c.onclick=()=>openModal(c.dataset.id));
+  root.querySelectorAll('.cmp-btn').forEach(b=>b.onclick=e=>{ e.stopPropagation(); toggleCompare(b.dataset.cmp); });
+}
+// ---- compare tray + side-by-side ----
+let compareSet = new Set((()=>{ try{ return JSON.parse(localStorage.getItem('compare')||'[]'); }catch(e){ return []; } })());
+const CMP_MAX = 4;
+const CMP_ROWS = [
+  {label:()=>t('sort_price'), get:L=>L.price, fmt:v=>euro(v), better:'lo'},
+  {label:()=>'€/m²', get:L=>L.ppm2, fmt:v=>euro(v)+'/m²', better:'lo'},
+  {label:()=>t('area_price'), get:L=>L.area_ppm2, fmt:v=>euro(v)+'/m²', better:null},
+  {label:()=>t('fact_size'), get:L=>L.size, fmt:v=>v+' m²', better:'hi'},
+  {label:()=>t('fact_rooms'), get:L=>L.rooms, fmt:v=>''+v, better:'hi'},
+  {label:()=>t('fact_bedrooms'), get:L=>bd(L), fmt:v=>''+v, better:'hi'},
+  {label:()=>t('fact_year'), get:L=>L.year, fmt:v=>''+v, better:'hi'},
+  {label:()=>t('fact_type'), get:L=>L.type?cap(L.type):null, fmt:v=>v, better:null},
+  {label:()=>t('cost_tag'), get:L=>L.cost?L.cost.monthly:null, fmt:v=>euro(v)+' / '+t('per_month'), better:'lo'},
+  {label:()=>t('bank_label'), get:L=>L.bank_risk?L.bank_risk.score:null, fmt:(v,L)=>t('risk_'+L.bank_risk.level), better:'lo'},
+  {label:()=>t('reno_label'), get:L=>L.reno_risk?L.reno_risk.score:null, fmt:(v,L)=>t('risk_'+L.reno_risk.level), better:'lo'},
+  {label:()=>t('sort_transit'), get:L=>L.transit_min, fmt:v=>v+' min', better:'lo'},
+  {label:()=>t('sort_station'), get:L=>L.station_km, fmt:v=>v+' km', better:'lo'},
+  {label:()=>t('fact_parking'), get:L=>L.parking_rank, fmt:(v,L)=>{const p=L.features&&L.features.parking;return p?(PARK[p.type]||p.type):'—';}, better:'hi'},
+  {label:()=>t('fact_land'), get:L=>(L.features&&L.features.land_ownership)||null, fmt:v=>t('land_'+v), better:null},
+  {label:()=>t('fact_energy'), get:L=>(L.features&&L.features.energy_class)||null, fmt:v=>v, better:null},
+  {label:()=>t('days_on_market'), get:L=>daysAgo(L.first_seen), fmt:v=>v+' '+t('unit_days'), better:null},
+  {label:()=>t('data_confidence'), get:L=>L.confidence?L.confidence.pct:null, fmt:v=>v+'%', better:'hi'},
+];
+function toggleCompare(id){
+  if(compareSet.has(id)) compareSet.delete(id);
+  else { if(compareSet.size>=CMP_MAX) return; compareSet.add(id); }
+  try{ localStorage.setItem('compare', JSON.stringify([...compareSet])); }catch(e){}
+  document.querySelectorAll('.cmp-btn').forEach(b=>{ if(b.dataset.cmp===id){ b.classList.toggle('on',compareSet.has(id)); b.textContent=compareSet.has(id)?'✓':'+'; } });
+  document.querySelectorAll('.card').forEach(c=>{ if(c.dataset.id===id) c.classList.toggle('cmp-on',compareSet.has(id)); });
+  renderCompareBar();
+}
+function clearCompare(){ compareSet.clear(); try{localStorage.setItem('compare','[]');}catch(e){}
+  document.querySelectorAll('.cmp-btn.on').forEach(b=>{ b.classList.remove('on'); b.textContent='+'; });
+  document.querySelectorAll('.card.cmp-on').forEach(c=>c.classList.remove('cmp-on'));
+  renderCompareBar(); }
+function renderCompareBar(){
+  const bar=document.getElementById('compareBar'); if(!bar) return;
+  const Ls=[...compareSet].map(id=>DATA.listings.find(x=>x.id===id)).filter(Boolean);
+  if(!Ls.length){ bar.classList.remove('show'); bar.innerHTML=''; return; }
+  const thumbs=Ls.map(L=>L.photos&&L.photos[0]?'<img src="'+esc(L.photos[0])+'" alt="">':'').join('');
+  bar.innerHTML='<span class="cb-label">'+esc(t('compare_count',{n:Ls.length}))+'</span><span class="cb-thumbs">'+thumbs+'</span>'
+    +'<button class="cb-go" id="cbGo"'+(Ls.length<2?' disabled':'')+'>'+esc(t('compare_go'))+'</button>'
+    +'<button class="cb-clear" id="cbClear">'+esc(t('clear'))+'</button>';
+  bar.classList.add('show');
+  document.getElementById('cbGo').onclick=openCompare;
+  document.getElementById('cbClear').onclick=clearCompare;
+}
+function openCompare(){
+  const Ls=[...compareSet].map(id=>DATA.listings.find(x=>x.id===id)).filter(Boolean);
+  if(Ls.length<2) return;
+  let head='<tr><th class="cmp-metric"></th>'+Ls.map(L=>'<th class="cmp-col-head">'
+    +(L.photos&&L.photos[0]?'<img src="'+esc(L.photos[0])+'" alt="">':'')
+    +'<div class="ch-title">'+esc(L.title)+'</div>'
+    +'<a href="'+esc(L.url)+'" target="_blank" rel="noopener" class="ch-link">'+esc(t('view_on',{source:L.source}))+'</a>'
+    +'<button class="ch-rm" data-rm="'+esc(L.id)+'">✕ '+esc(t('remove'))+'</button></th>').join('')+'</tr>';
+  let body='';
+  for(const row of CMP_ROWS){
+    const vals=Ls.map(L=>row.get(L));
+    const best=new Set();
+    if(row.better){ const nums=vals.filter(v=>typeof v==='number');
+      if(nums.length>=2 && new Set(nums).size>1){ const b=row.better==='hi'?Math.max(...nums):Math.min(...nums);
+        vals.forEach((v,i)=>{ if(v===b) best.add(i); }); } }
+    body+='<tr><td class="cmp-metric">'+esc(row.label().replace(/[↑↓]/g,'').trim())+'</td>'+Ls.map((L,i)=>{
+      const v=vals[i]; const disp=(v==null||v==='')?'—':row.fmt(v,L);
+      return '<td class="'+(best.has(i)?'cmp-best':'')+'">'+esc(String(disp))+'</td>'; }).join('')+'</tr>';
+  }
+  document.getElementById('compareBody').innerHTML='<h1 style="font-size:22px;margin:0 0 4px">'+esc(t('compare_heading'))+'</h1>'
+    +'<p style="color:var(--muted);margin:0 0 16px;font-size:13px">'+esc(t('compare_hint'))+'</p>'
+    +'<div class="cmp-wrap"><table class="cmp-table">'+head+body+'</table></div>';
+  document.getElementById('compareBack').classList.add('open');
+  document.querySelectorAll('#compareBody .ch-rm').forEach(b=>b.onclick=()=>{ toggleCompare(b.dataset.rm); if(compareSet.size<2){ closeCompare(); } else openCompare(); });
+}
+function closeCompare(){ document.getElementById('compareBack').classList.remove('open'); }
 function riskSection(L){
   const row=(labelKey,r)=>{ if(!r) return ''; const c=RISKCOL[r.level];
     return '<div class="risk-row"><div class="risk-h" style="color:'+c+'">'+esc(t(labelKey))+': '+esc(t('risk_'+r.level))+'</div><ul>'+(r.reasons||[]).map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></div>'; };
@@ -788,8 +894,11 @@ function L2map(L){ const m=window.L.map('dmap').setView([L.lat,L.lon],14);
 function closeModal(){ document.getElementById('modalBack').classList.remove('open'); if(window._dm){window._dm.remove();window._dm=null;} }
 document.getElementById('modalClose').onclick=closeModal;
 document.getElementById('modalBack').onclick=e=>{ if(e.target.id==='modalBack') closeModal(); };
+document.getElementById('compareClose').onclick=closeCompare;
+document.getElementById('compareBack').onclick=e=>{ if(e.target.id==='compareBack') closeCompare(); };
 document.getElementById('rfClose').onclick=()=>{ rfCancelled=true; rfBusy=false; document.getElementById('rfOverlay').classList.remove('open'); };
 render();
+renderCompareBar();
 })();
 </script>
 </body>
