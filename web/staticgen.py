@@ -398,7 +398,7 @@ img{max-width:100%}
   .bar-label{width:100%;margin:2px 0}
   .rk,.ct,.tp,.chk{padding:9px 14px;font-size:14px}
   .filters-panel{padding:12px}
-  .modal-back{padding:0;align-items:stretch}
+  .modal-back{padding:0;align-items:flex-start;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
   .modal{max-width:100%;min-height:100%;border-radius:0}
   .modal-inner{padding:16px 15px calc(28px + env(safe-area-inset-bottom))}
   .modal-close{top:calc(8px + env(safe-area-inset-top));width:38px;height:38px}
