@@ -369,7 +369,10 @@ _EXTRA_CSS = """
    ===================================================================== */
 /* Safe global guards (no visual effect on desktop): never scroll sideways;
    never let an image or long word push the layout wider than the screen. */
-html,body{max-width:100%;overflow-x:hidden}
+/* Prevent sideways scroll WITHOUT making the root a scroll container — plain
+   overflow-x:hidden on html+body breaks vertical scrolling on mobile Safari. */
+html{overflow-x:clip}
+body{max-width:100%;overflow-x:clip}
 body{-webkit-text-size-adjust:100%}
 img{max-width:100%}
 .card-title,.board-intro h1,.detail-addr,.detail-head h1{overflow-wrap:anywhere}
