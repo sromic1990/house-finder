@@ -27,7 +27,7 @@ except ImportError:
 
 from core.config import load_config
 from core.criteria import build_criteria
-from core.notify import notify_new_top_entries, notify_price_drops
+from core.notify import notify_new_top_entries, notify_price_drops, notify_viewings
 from core.routing import configured_destinations, transit_minutes
 from core.scoring import rank_listings
 from db import Store
@@ -131,6 +131,37 @@ def collect_once(config: dict, store: Store) -> dict:
     if board_dropped:
         notify_price_drops(board_dropped, config=config, board_url=board_url)
         log.info("price-drop email: %d board listing(s) cut this run", len(board_dropped))
+
+    # Public-viewing tracker: re-fetch each board listing's detail to catch newly
+    # announced viewing times. First time we see a listing we set a silent
+    # baseline (marked on the card, no email); after that, only NEW times email.
+    vcfg = config.get("viewings", {})
+    if vcfg.get("track", True):
+        cap = int(vcfg.get("max_listings", 200))   # bound the extra fetches per run
+        v_changed, v_new = [], []
+        for r in ranked[:cap]:
+            L = r.listing
+            detail = fetch_detail(L.url)
+            if not detail:
+                continue
+            nv = detail.get("viewings") or []
+            if not L.features.get("viewings_tracked"):
+                L.features["viewings"] = nv
+                L.features["viewings_tracked"] = True
+                v_changed.append(L)
+            else:
+                old = L.features.get("viewings") or []
+                if nv != old:
+                    L.features["viewings"] = nv
+                    v_changed.append(L)
+                fresh = [v for v in nv if v not in old]
+                if fresh:
+                    v_new.append((L, fresh))
+        if v_changed:
+            store.upsert_listings(v_changed)
+        if v_new:
+            notify_viewings(v_new, config=config, board_url=board_url)
+            log.info("viewing email: %d board listing(s) with new viewing times", len(v_new))
 
     # Render the static site BEFORE saving this run's snapshot, so the site's
     # NEW badges compare against the PREVIOUS run (like the email does).

@@ -35,6 +35,13 @@ sources:
   etuovi:   { enabled: true, max_pages: 40 }   # per house type; adapter stops at the real last page
   oikotie:  { enabled: true, building_types: [1, 2, 4, 32, 64] }  # +kerrostalo (kept only if duplex)
 
+# Public-viewing tracker ---------------------------------------------------
+# Each run re-checks board listings for newly announced public viewings
+# (esittely / avoimet ovet). New times are emailed and shown on the card.
+viewings:
+  track: true
+  max_listings: 200   # cap the extra detail fetches/run; lower if a portal rate-limits
+
 # How often to refresh listings (detect new / delisted) --------------------
 schedule:
   interval_hours: 6

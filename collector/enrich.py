@@ -123,10 +123,34 @@ def fetch_detail(url: str) -> dict:
                      ("financing_fee", _fee("Pääomavastike", "Rahoitusvastike")),
                      ("charge_total", _fee("Yhtiövastike yhteensä")),
                      ("reno_planned", _section("Tulevat remontit")),
-                     ("reno_done", _section("Tehdyt remontit"))):
+                     ("reno_done", _section("Tehdyt remontit")),
+                     ("viewings", _viewings(flat))):
         if val is not None:
             out[key] = val
     return out
+
+
+# Public-viewing times: "Esittely" / "Avoimet ovet" / "Näytöt" followed by a
+# Finnish date + "klo" time (e.g. "ke 9.7. klo 17:00–17:30"). Portals list only
+# UPCOMING viewings, so no past-date filtering is needed.
+_VIEW_LABEL = re.compile(r"Esittely\w*|Yleisesittely|Avoimet ovet|Näyt[öo]\w*|Esittelyajankoh\w*", re.I)
+_VIEW_DT = re.compile(
+    r"(?:(?:ma|ti|ke|to|pe|la|su)\s*)?\d{1,2}\.\d{1,2}\.(?:\d{2,4})?\s*klo\s*"
+    r"\d{1,2}[.:]\d{2}(?:\s*[–\-—]\s*\d{1,2}[.:]\d{2})?", re.I)
+
+
+def _viewings(flat: str):
+    """Return a list of upcoming viewing date/time strings, [] if a viewing
+    section exists but has no parsable time, or None if there's no section."""
+    if not flat or not _VIEW_LABEL.search(flat):
+        return None
+    found = []
+    for m in _VIEW_LABEL.finditer(flat):
+        for dm in _VIEW_DT.finditer(flat[m.end():m.end() + 260]):
+            s = re.sub(r"\s+", " ", dm.group(0)).strip(" -–—")
+            if s and s not in found:
+                found.append(s)
+    return found
 
 
 def _money(s: str):

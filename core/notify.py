@@ -167,6 +167,60 @@ def notify_price_drops(dropped_ranked, *, config, mailer=None,
     return dropped_ranked
 
 
+def render_viewings(entries, board_url: str) -> str:
+    """entries: list of (Listing, [new_viewing_str, ...])."""
+    rows = []
+    for L, viewings in entries:
+        photo = L.photos[0] if L.photos else ""
+        img = (f'<img src="{photo}" width="150" style="border-radius:8px;'
+               f'object-fit:cover" alt="">') if photo else ""
+        facts = " · ".join(x for x in [
+            f"{L.size_m2:g} m²" if L.size_m2 else "",
+            f"{L.rooms:g} r" if L.rooms else "", L.district or L.city] if x)
+        times = "".join(f'<div style="font-size:15px;font-weight:700;color:#1a7f37">'
+                        f'📅 {v}</div>' for v in viewings)
+        rows.append(f"""
+        <tr><td style="padding:12px 0;border-bottom:1px solid #eee"><table><tr>
+          <td valign="top">{img}</td>
+          <td valign="top" style="padding-left:14px">
+            {times}
+            <div style="font-size:17px;font-weight:600;margin:2px 0">
+              <a href="{L.url}" style="color:#1a1a1a;text-decoration:none">{L.title}</a></div>
+            <div style="color:#555">{facts}</div>
+          </td></tr></table></td></tr>""")
+    plural = "s" if len(entries) > 1 else ""
+    return f"""\
+<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:620px;margin:auto">
+  <h2 style="margin:0 0 4px">📅 New viewing{plural} announced</h2>
+  <p style="color:#666;margin:0 0 12px">{len(entries)} home{plural} on your board just posted a public viewing time.</p>
+  <table width="100%">{''.join(rows)}</table>
+  <p style="margin-top:18px"><a href="{board_url}" style="background:#111;color:#fff;
+     padding:10px 18px;border-radius:8px;text-decoration:none">Open the leaderboard →</a></p>
+</div>"""
+
+
+def notify_viewings(entries, *, config, mailer=None,
+                    board_url="http://localhost:8000") -> list:
+    """Email board listings that just announced NEW public viewing times.
+    entries: list of (Listing, [new_viewing_str, ...])."""
+    ecfg = (config.get("notify", {}) or {}).get("email", {}) or {}
+    if not ecfg.get("enabled", False) or not entries:
+        return []
+    to = os.getenv("NOTIFY_TO") or ecfg.get("to")
+    if not to:
+        return []
+    mailer = mailer or default_mailer()
+    n = len(entries)
+    subject = (f"📅 Viewing: {entries[0][0].title}" if n == 1
+               else f"📅 {n} new viewings on your board")
+    try:
+        mailer.send(subject, render_viewings(entries, board_url), to)
+    except Exception as exc:
+        import logging
+        logging.getLogger("notify").error("viewing email failed (continuing): %s", exc)
+    return entries
+
+
 def notify_new_top_entries(previous_ranks, ranked, *, config, mailer=None,
                            board_url="http://localhost:8000") -> list:
     """Detect + send. Returns the entries that triggered a notification."""

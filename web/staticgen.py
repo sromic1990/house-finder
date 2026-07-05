@@ -428,6 +428,9 @@ html.dark .excluded-table{background:#171a21;color:var(--ink)}
 html.dark .mk-save.on{background:#3a2f10;border-color:#f5b301;color:#f0c85a}
 html.dark .mk-dismiss.on{background:#3a1c1c;border-color:#e05656;color:#f0a0a0}
 html.dark .note-box textarea{background:#0f1115}
+html.dark .viewing-box{background:#171a21;color:var(--ink)}
+html.dark .viewing-line{background:#123021;color:#4ade80}
+html.dark .viewing-list li{color:#4ade80}
 html.dark .spark{background:linear-gradient(180deg,transparent,rgba(255,255,255,.04))}
 html.dark .chk{background:#20242e}
 html.dark .chip{background:#222b3d;color:#bcc8e0}
@@ -674,6 +677,7 @@ function card(r){
     +'<div class="card-body">'+(L.type?'<div class="card-type">'+esc(cap(L.type))+'</div>':'')+'<div class="card-title">'+esc(L.title)+'</div>'
     +'<div class="card-price">'+euro(L.price)+(d?' <span class="drop-was">↓ '+euro(d.amt)+' · '+esc(t('was'))+' '+euro(d.prev)+'</span>':'')+(L.ppm2?' <span class="ppm2'+(L.area_ppm2&&L.ppm2>1.15*L.area_ppm2?' ppm2-high':'')+'">· '+euro(L.ppm2)+'/m²</span>':'')+'</div>'
     +(L.area_ppm2?'<div class="area-line" title="'+esc(t('area_price_tip'))+'">'+esc(t('area_price'))+' ≈ '+euro(L.area_ppm2)+'/m²</div>':'')
+    +viewingLine(L)
     +(L.cost?'<div class="cost-line" title="'+esc(t('cost_heading'))+'">≈ '+euro(L.cost.monthly)+' / '+esc(t('per_month'))+' <span class="cost-sub">'+esc(t('cost_tag'))+(L.cost.charges_estimated?' *':'')+'</span></div>':'')
     +'<div class="card-facts">'+fa+'</div>'+commuteLine(L)+'<div class="card-chips">'+chips+'</div>'
     +'<div class="risks">'+riskPill('bank_label',L.bank_risk)+riskPill('reno_label',L.reno_risk)+'</div>'
@@ -689,6 +693,15 @@ function commuteLine(L){
   if(!COMMUTE_DESTS.length) return '';
   const parts=COMMUTE_DESTS.map(n=>{ const m=transitTo(L,n); return m==null?null:'<span>'+esc(destLabel(n))+' '+m+'m</span>'; }).filter(Boolean);
   return parts.length?'<div class="commute-line">🚆 '+parts.join(' · ')+'</div>':'';
+}
+function viewings(L){ return (L.features&&L.features.viewings)||[]; }
+function viewingLine(L){ const v=viewings(L); if(!v.length) return '';
+  const more=v.length>1?' <span class="vw-more">+'+(v.length-1)+'</span>':'';
+  return '<div class="viewing-line" title="'+esc(t('viewings_heading'))+'">📅 '+esc(t('viewing'))+': '+esc(v[0])+more+'</div>';
+}
+function viewingSection(L){ const v=viewings(L); if(!v.length) return '';
+  return '<section class="viewing-box"><h2>📅 '+esc(t('viewings_heading'))+'</h2><ul class="viewing-list">'
+    +v.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></section>';
 }
 function trustLine(L){
   const dom=daysAgo(L.first_seen), c=L.confidence; if(dom==null&&!c) return '';
@@ -965,6 +978,7 @@ function openModal(id){
     +'<div class="detail-cols"><section class="facts-box"><h2>'+esc(t('key_facts'))+'</h2>'+facts(L)+'</section>'
     +'<section class="score-box"><h2>'+esc(t('why_rank'))+'</h2><ul class="score-list">'+bars+'</ul></section></div>'
     +'<section class="note-box"><h2>📝 '+esc(t('notes'))+'</h2><textarea id="noteArea" placeholder="'+esc(t('note_ph'))+'">'+esc(getMark(L).note||'')+'</textarea></section>'
+    +viewingSection(L)
     +costSection(L)
     +riskSection(L)
     +historySection(L)
